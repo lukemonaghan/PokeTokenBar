@@ -81,7 +81,7 @@ final class CompanionDisplayStateTests: XCTestCase {
         s.update(todayTokensByProvider: ["test": 100], todayDate: "d", monthTotal: 0, burnTier: .normal, limitWarning: false, hasUsageData: true)
         // stage0 임계 도달 → 정확히 1회 진화(1→2). justEvolvedTo 설정 + 이벤트 창 갱신(clock+4).
         s.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 0))
-        XCTAssertEqual(s.state.active?.stageIndex, 1)
+        XCTAssertEqual(s.trainingMon?.stageIndex, 1)
         let evolvedName = s.justEvolvedTo
         XCTAssertNotNil(evolvedName, "진화 직후 진화 문구가 설정돼야 함")
         // 창이 살아있는 동안 추가 update()(delta 0)가 와도 진화 문구·levelUp 이 유지돼야 한다.

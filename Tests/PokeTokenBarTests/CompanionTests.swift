@@ -169,6 +169,9 @@ private let branch3 = makeLine(base: 10, tree: node(10, [node(11), node(12), nod
 private let wurmpleLine = makeLine(base: 265, tree: node(265, [node(266, [node(267)]), node(268, [node(269)])]))
 // Oddish: 43 → 44 → {45, 182}
 private let delayedBranchLine = makeLine(base: 43, tree: node(43, [node(44, [node(45), node(182)])]))
+// 전설 단일형태(졸업 총량 6B) — PC 테스트에서 1B 알 구매 자금을 대도 훈련 중인 개체가
+// 그 김에 졸업해버리지 않도록(그러면 훈련 슬롯이 스스로 풀려 시나리오가 무너진다) 여유가 큰 라인이 필요하다.
+private let legendarySingle = makeLine(base: 900, tree: node(900), rarity: .legendary)
 // 무진화: 20
 private let noEvo = makeLine(base: 20, tree: node(20))
 private let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)
@@ -213,7 +216,7 @@ final class CompanionStoreTests: XCTestCase {
                                fileURL: url, rng: SeededRNG(seed: 7))
 
         XCTAssertTrue(s.state.dex.isEmpty)
-        XCTAssertNil(s.state.active)
+        XCTAssertNil(s.trainingMon)
         XCTAssertEqual(s.state.usedSinceInstall, 0, "fresh state 로 시작")
 
         let backup = url.appendingPathExtension("corrupt")
@@ -236,7 +239,7 @@ final class CompanionStoreTests: XCTestCase {
         let s = CompanionStore(provider: StubProvider(value: linear3), clock: { fixedNow },
                                fileURL: url, rng: SeededRNG(seed: 7))
 
-        XCTAssertNil(s.state.active, "손상 active 는 nil(알)로 폴백")
+        XCTAssertNil(s.trainingMon, "손상 active 는 nil(알)로 폴백")
         XCTAssertEqual(s.state.dex.count, 1, "도감 보존")
         XCTAssertEqual(s.state.inventory["rareCandy"], 3, "인벤토리 보존")
         XCTAssertEqual(s.state.usedSinceInstall, 5000, "누적 토큰 보존")
@@ -336,8 +339,8 @@ final class CompanionStoreTests: XCTestCase {
 
         let s = CompanionStore(provider: StubProvider(value: linear3), clock: { fixedNow },
                                fileURL: url, rng: SeededRNG(seed: 7))
-        XCTAssertTrue(s.state.dex.isEmpty)
-        XCTAssertEqual(s.state.active?.stageIndex, 0)
+        XCTAssertEqual(s.state.dex.count, 1, "마이그레이션이 active 를 위한 포획 로그 행을 만든다")
+        XCTAssertEqual(s.trainingMon?.stageIndex, 0)
         XCTAssertEqual(s.dexSpecies.map(\.id), [1], "미도달 단계가 보유로 새지 않는다")
     }
 
@@ -377,7 +380,7 @@ final class CompanionStoreTests: XCTestCase {
                                   fileURL: url, rng: SeededRNG(seed: 7))
         }
         let disguised = try store(revealed: false)
-        XCTAssertTrue(disguised.state.active?.isShiny ?? false, "내부적으론 이로치")
+        XCTAssertTrue(disguised.trainingMon?.isShiny ?? false, "내부적으론 이로치")
         XCTAssertEqual(disguised.dexSpecies.first?.isShiny, false, "위장 중엔 도감에도 숨김")
 
         let revealed = try store(revealed: true)
@@ -447,48 +450,10 @@ final class CompanionStoreTests: XCTestCase {
         XCTAssertEqual(online.dexSpecies.map(\.name), ["포1", "포2", "포3"])
     }
 
-    // MARK: 도감 "키우는 중" 표식 (아직 확정이 아닌 칸)
+    // MARK: 도감 영구 언락 (PC 리팩터 이후 — isRaising 개념 자체가 사라졌다: 아무것도 폐기되지
+    // 않으므로 "아직 확정 아님" 상태가 존재하지 않는다. 예전 이 자리의 3개 테스트는 삭제됨.)
 
-    /// 졸업 기록이 없는 종은 현재 개체가 사라지면 함께 사라진다 — **도달 단계 전부**에 표식이 선다.
-    /// (진화 3단까지 왔으면 3칸 모두. 알을 새로 사면 실제로 3칸이 다 빠진다.)
-    func testDexSpeciesMarksEveryUnsecuredStageAsRaising() async {
-        let s = store(linear3)
-        s.setLanguage(.ko)
-        await s.hatch(baseID: 1)
-        s.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 0))
-        XCTAssertEqual(s.state.active?.stageIndex, 1, "2단계까지 진화")
-
-        let sp = s.dexSpecies
-        XCTAssertEqual(sp.map(\.id), [1, 2])
-        XCTAssertEqual(sp.map(\.isRaising), [true, true], "졸업 기록이 없으니 둘 다 미확정")
-    }
-
-    /// 트리거 브랜치 — 같은 라인을 졸업한 뒤 **다시 키우는 중**. 종은 이미 영구 보존분이라 사라지지 않으므로
-    /// 표식이 서면 안 된다. "현재 개체에 속하면 표식"으로 판정하면 여기서 깨진다.
-    func testAlreadyGraduatedSpeciesIsNotMarkedWhileRaisedAgain() throws {
-        let graduated = DexEntry(baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: .common, caughtAt: fixedNow,
-                                 names: [1: ["ko": "포1"], 2: ["ko": "포2"], 3: ["ko": "포3"]])
-        let active = MonState(baseID: 1, pathIDs: [1, 2, 3], stageIndex: 1,
-                              usedAtStage: 0, rarity: .common, totalForms: 3, nature: .brave)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("poke-\(UUID().uuidString).json")
-        let dexJSON = String(decoding: try JSONEncoder().encode([graduated]), as: UTF8.self)
-        let activeJSON = String(decoding: try JSONEncoder().encode(active), as: UTF8.self)
-        try Data(#"{"dex":\#(dexJSON),"active":\#(activeJSON),"language":"ko"}"#.utf8).write(to: url)
-
-        let s = CompanionStore(provider: StubProvider(value: linear3), clock: { fixedNow },
-                               fileURL: url, rng: SeededRNG(seed: 7))
-        XCTAssertEqual(s.dexSpecies.map(\.isRaising), [false, false, false],
-                       "졸업분이 있는 종은 현재 키우는 중이어도 확정분")
-    }
-
-    /// 졸업분만 있고 현재 개체가 없으면 표식은 하나도 없다(모두 영구 기록).
-    func testGraduatedOnlyDexHasNoRaisingMark() throws {
-        let s = try storeWithNamelessEntry()
-        XCTAssertNil(s.state.active)
-        XCTAssertEqual(s.dexSpecies.map(\.isRaising), [false, false, false])
-    }
-
-    /// 이름 없는 구버전 졸업분 1건(체인 1→2→3)만 담긴 store — 백필/표식 테스트 공용.
+    /// 이름 없는 구버전 졸업분 1건(체인 1→2→3)만 담긴 store — 백필 테스트 공용.
     private func storeWithNamelessEntry() throws -> CompanionStore {
         let bare = DexEntry(baseID: 1, finalID: 3, chainOrder: [1, 2, 3], rarity: .common, caughtAt: fixedNow)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("poke-\(UUID().uuidString).json")
@@ -690,7 +655,7 @@ final class CompanionStoreTests: XCTestCase {
         XCTAssertEqual(s.state.eggUsage, 500_000)
         XCTAssertTrue(s.isEgg)
         await s.hatchIfNeeded()
-        XCTAssertNil(s.state.active)   // 임계 미만 → 미부화
+        XCTAssertNil(s.trainingMon)   // 임계 미만 → 미부화
     }
 
     func testEggHatchesAtThreshold() async {
@@ -699,17 +664,18 @@ final class CompanionStoreTests: XCTestCase {
         use(s, PokemonBalance.eggHatchThreshold)   // = 1M
         XCTAssertEqual(s.state.eggUsage, PokemonBalance.eggHatchThreshold)
         await s.hatchIfNeeded()
-        XCTAssertNotNil(s.state.active)
+        XCTAssertNotNil(s.trainingMon)
         XCTAssertEqual(s.state.eggUsage, 0)
     }
 
-    /// [회귀] 부화한 현재 포켓몬은 졸업 전에도 도감에 보여야 한다. 영구 dex 에 미리 저장하지 않고
-    /// 화면용 엔트리로 합쳐, 진화 경로는 즉시 갱신되고 졸업 시 중복이 생기지 않는다.
+    /// 부화한 순간 진짜 포획 로그 행이 생긴다(합류 시점 기록 — 화면용 합성이 아니다). 그 개체가
+    /// 진화하는 동안 같은 행이 실시간으로 갱신되고(syncTrainingDexEntry), 졸업해도 새 행이 추가로
+    /// 생기지 않는다(중복 없음) — 하나의 개체 = 하나의 행, 시작부터 끝까지.
     func testActiveCompanionAppearsInDexBeforeGraduationWithoutDuplicate() async {
         let s = store(linear3)
         await s.hatch(baseID: 1)
 
-        XCTAssertTrue(s.state.dex.isEmpty, "졸업 전 영구 dex 는 비어 있어야 함")
+        XCTAssertEqual(s.state.dex.count, 1, "합류 시점에 이미 진짜 포획 로그 행이 있다")
         XCTAssertEqual(s.dexEntries.count, 1, "현재 포켓몬도 도감 화면에는 즉시 보여야 함")
         XCTAssertEqual(s.dexEntries[0].chainOrder, [1])
         XCTAssertEqual(s.dexEntries[0].finalID, 1)
@@ -721,7 +687,7 @@ final class CompanionStoreTests: XCTestCase {
 
         s.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 1))
         s.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 2))
-        XCTAssertNil(s.state.active)
+        XCTAssertNil(s.trainingMon)
         XCTAssertEqual(s.state.dex.count, 1, "졸업 시 영구 엔트리 하나만 저장")
         XCTAssertEqual(s.dexEntries.count, 1, "화면용 active 가 영구 엔트리와 중복되면 안 됨")
         XCTAssertEqual(s.dexEntries[0].chainOrder, [1, 2, 3])
@@ -736,26 +702,32 @@ final class CompanionStoreTests: XCTestCase {
 
         let s = CompanionStore(provider: StubProvider(value: linear3), clock: { fixedNow },
                                fileURL: url, rng: SeededRNG(seed: 7))
-        XCTAssertTrue(s.state.dex.isEmpty)
+        // 구버전 active 마이그레이션이 실제 포획 로그 행을 만든다(예전엔 화면용으로만 합성했다).
+        XCTAssertEqual(s.state.dex.count, 1, "마이그레이션이 active 를 위한 포획 로그 행을 만든다")
         XCTAssertEqual(s.dexEntries.count, 1)
         XCTAssertEqual(s.dexEntries[0].baseID, 529)
         XCTAssertEqual(s.dexCount(.uncommon), 1)
     }
 
-    /// [회귀] 현재 키우는 common 포켓몬은 더 희귀한 졸업 항목보다도 위에 고정된다.
-    /// caughtAt 이 없는 구버전 졸업 항목은 active 로 오인하지 않는다.
-    func testActiveCompanionPinnedBeforeGraduatedEntries() throws {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("poke-active-sort-\(UUID().uuidString).json")
-        let json = #"{"active":{"baseID":1,"pathIDs":[1],"stageIndex":0,"usedAtStage":5,"rarity":"common","totalForms":3},"dex":[{"id":"legacy-graduated","baseID":150,"finalID":150,"chainOrder":[150],"rarity":"legendary"}]}"#
+    /// 포획 로그는 순수 합류 시각 내림차순이다 — 예전엔 훈련 중인 개체를 화면용으로 합성해 맨 앞에
+    /// 고정했지만(active 는 진짜 행이 없었으므로), 지금은 파티 합류 순간(hatch/거래·마이그레이션)에
+    /// 이미 진짜 행이 생기므로 특별 취급이 필요 없다. 마이그레이션된 active 행은 실제 합류 시각을
+    /// 몰라 caughtAt=nil(.distantPast 취급)이므로, 실제 시각이 있는 졸업 행보다 뒤로 간다.
+    func testDexEntriesSortedByCaughtAtDescendingOnly() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("poke-sort-\(UUID().uuidString).json")
+        let graduated = DexEntry(id: "legacy-graduated", baseID: 150, finalID: 150, chainOrder: [150],
+                                 rarity: .legendary, caughtAt: fixedNow)
+        let dexJSON = String(decoding: try JSONEncoder().encode([graduated]), as: UTF8.self)
+        let json = #"{"active":{"baseID":1,"pathIDs":[1],"stageIndex":0,"usedAtStage":5,"rarity":"common","totalForms":3},"dex":\#(dexJSON)}"#
         try json.data(using: .utf8)!.write(to: url)
 
         let s = CompanionStore(provider: StubProvider(value: linear3), clock: { fixedNow },
                                fileURL: url, rng: SeededRNG(seed: 7))
         let sorted = s.dexEntriesSorted
 
-        XCTAssertEqual(sorted.map(\.id), ["active-1-1", "legacy-graduated"])
-        XCTAssertTrue(s.isActiveDexEntry(sorted[0]))
-        XCTAssertFalse(s.isActiveDexEntry(sorted[1]), "caughtAt=nil 만으로 active 를 판별하면 안 됨")
+        XCTAssertEqual(sorted.map(\.baseID), [150, 1], "실제 시각(150)이 근사치 nil(1)보다 먼저 와야 한다")
+        XCTAssertFalse(s.isTrainingLogEntry(sorted[0]), "150 은 졸업 기록일 뿐 훈련 중이 아니다")
+        XCTAssertTrue(s.isTrainingLogEntry(sorted[1]), "1 은 구버전 active 에서 승격된, 지금 훈련 중인 개체")
     }
 
     func testDexRaisingLabelLocalized() {
@@ -775,7 +747,7 @@ final class CompanionStoreTests: XCTestCase {
         base(s)
         use(s, PokemonBalance.eggHatchThreshold + 500_000)   // 임계 초과 0.5M
         await s.hatchIfNeeded()
-        XCTAssertEqual(s.state.active?.usedAtStage, 500_000)   // 초과분 이월
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 500_000)   // 초과분 이월
     }
 
     /// GraphQL base 인덱스 엔드포인트가 죽어도 REST 폴백으로 부화한다 (2026-07 실장애 회귀 방지).
@@ -786,7 +758,7 @@ final class CompanionStoreTests: XCTestCase {
         base(s)
         use(s, PokemonBalance.eggHatchThreshold)
         await s.hatchIfNeeded()
-        XCTAssertNotNil(s.state.active, "인덱스 장애 시 REST 폴백으로 부화해야 함")
+        XCTAssertNotNil(s.trainingMon, "인덱스 장애 시 REST 폴백으로 부화해야 함")
         XCTAssertEqual(s.state.eggUsage, 0)
     }
 
@@ -795,12 +767,12 @@ final class CompanionStoreTests: XCTestCase {
         base(s)
         use(s, PokemonBalance.eggHatchThreshold)
         await s.hatchIfNeeded()
-        XCTAssertNotNil(s.state.active)
+        XCTAssertNotNil(s.trainingMon)
         s.applyUsage(PokemonBalance.graduationTotal(.common))   // 무진화 졸업
-        XCTAssertNil(s.state.active)
+        XCTAssertNil(s.trainingMon)
         XCTAssertEqual(s.state.eggUsage, 0)                     // 새 알 인큐베이션 리셋
         await s.hatchIfNeeded()                                 // eggUsage=0 → 즉시 부화 안 함
-        XCTAssertNil(s.state.active)
+        XCTAssertNil(s.trainingMon)
     }
 
     func testStateDecodesWithoutEggUsage() throws {
@@ -817,14 +789,14 @@ final class CompanionStoreTests: XCTestCase {
         s.setLanguage(.ko)   // 로케일 무관하게 한국어 표시명("포3") 검증 (CI 는 영어 로케일)
         await s.hatch(baseID: 1)
         XCTAssertEqual(s.currentSpeciesID, 1)
-        XCTAssertEqual(s.state.active?.totalForms, 3)
+        XCTAssertEqual(s.trainingMon?.totalForms, 3)
         s.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 0)) // →2
         XCTAssertEqual(s.currentSpeciesID, 2)
         s.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 1)) // →3 (final)
         XCTAssertEqual(s.currentSpeciesID, 3)
         XCTAssertTrue(s.isFinalStage)
         s.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 2)) // 졸업
-        XCTAssertNil(s.state.active)
+        XCTAssertNil(s.trainingMon)
         XCTAssertEqual(s.dexEntries.count, 1)
         XCTAssertEqual(s.dexEntries[0].chainOrder, [1, 2, 3])   // 라인 전체 보존
         XCTAssertEqual(s.justGraduated, "포3")
@@ -887,7 +859,7 @@ final class CompanionStoreTests: XCTestCase {
     func testLineNodesRevealsChosenWurmpleBranchAfterEvolution() async throws {
         let s = store(wurmpleLine)
         await s.hatch(baseID: 265)
-        let plan = try XCTUnwrap(s.state.active?.plannedPathIDs)
+        let plan = try XCTUnwrap(s.trainingMon?.plannedPathIDs)
         XCTAssertEqual(plan.count, 3)
         guard plan.count == 3 else { return }
 
@@ -923,7 +895,7 @@ final class CompanionStoreTests: XCTestCase {
 
         await s.hatch(baseID: 265)
 
-        guard let hatched = s.state.active else { return XCTFail("Wurmple should hatch") }
+        guard let hatched = s.trainingMon else { return XCTFail("Wurmple should hatch") }
         let plan = hatched.plannedPathIDs
         XCTAssertTrue([[265, 266, 267], [265, 268, 269]].contains(plan), "plan must be one complete root-to-leaf route")
         XCTAssertEqual(hatched.pathIDs, [265], "realized path starts at the base only")
@@ -935,7 +907,7 @@ final class CompanionStoreTests: XCTestCase {
         s.applyUsage(PokemonBalance.phaseThreshold(rarity: hatched.rarity, totalForms: hatched.totalForms, stageIndex: 0))
 
         XCTAssertEqual(rng.callCount, callsAfterHatch, "evolution must consume the stored plan without rolling RNG")
-        XCTAssertEqual(s.state.active?.pathIDs, Array(plan.prefix(2)))
+        XCTAssertEqual(s.trainingMon?.pathIDs, Array(plan.prefix(2)))
         XCTAssertEqual(s.currentSpeciesID, plan[1])
     }
 
@@ -946,8 +918,8 @@ final class CompanionStoreTests: XCTestCase {
         s1.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 0))
         s1.setLanguage(.ja)
         let s2 = CompanionStore(provider: StubProvider(value: linear3), clock: { fixedNow }, fileURL: url, rng: SeededRNG(seed: 1))
-        XCTAssertEqual(s2.state.active?.currentID, 2)
-        XCTAssertEqual(s2.state.active?.stageIndex, 1)
+        XCTAssertEqual(s2.trainingMon?.currentID, 2)
+        XCTAssertEqual(s2.trainingMon?.stageIndex, 1)
         XCTAssertEqual(s2.language, .ja)
     }
 
@@ -956,7 +928,7 @@ final class CompanionStoreTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("poke-reload-plan-\(UUID().uuidString).json")
         let s1 = CompanionStore(provider: StubProvider(value: line), clock: { fixedNow }, fileURL: url, rng: SeededRNG(seed: 7))
         await s1.hatch(baseID: 1)
-        XCTAssertEqual(s1.state.active?.plannedPathIDs, [1, 2], "seed selects the short complete route")
+        XCTAssertEqual(s1.trainingMon?.plannedPathIDs, [1, 2], "seed selects the short complete route")
 
         var opposing = SeededRNG(seed: 1)
         XCTAssertEqual(opposing.next() % 2, 1, "a reroll would select the opposite branch (3)")
@@ -968,8 +940,8 @@ final class CompanionStoreTests: XCTestCase {
         XCTAssertTrue(loaded, "line should load before evolution")
 
         XCTAssertNotNil(s2.currentLine)
-        XCTAssertEqual(s2.state.active?.plannedPathIDs, [1, 2])
-        XCTAssertEqual(s2.state.active?.totalForms, 2)
+        XCTAssertEqual(s2.trainingMon?.plannedPathIDs, [1, 2])
+        XCTAssertEqual(s2.trainingMon?.totalForms, 2)
         let callsAfterLoad = rng.callCount
         s2.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: 2, stageIndex: 0))
         XCTAssertEqual(s2.currentSpeciesID, 2, "persisted route must beat the post-restart RNG branch")
@@ -989,10 +961,10 @@ final class CompanionStoreTests: XCTestCase {
         let loaded = await waitUntil { s.currentLine != nil }
         XCTAssertTrue(loaded, "line should load legacy state")
 
-        let migratedPlan = s.state.active?.plannedPathIDs
+        let migratedPlan = s.trainingMon?.plannedPathIDs
         XCTAssertTrue([[265, 266, 267], [265, 268, 269]].contains(migratedPlan ?? []))
-        XCTAssertEqual(s.state.active?.pathIDs, [265], "realized path must remain intact")
-        XCTAssertEqual(s.state.active?.totalForms, migratedPlan?.count)
+        XCTAssertEqual(s.trainingMon?.pathIDs, [265], "realized path must remain intact")
+        XCTAssertEqual(s.trainingMon?.totalForms, migratedPlan?.count)
         XCTAssertEqual(rng.callCount, 2, "Wurmple suffix selection rolls once per evolution edge")
 
         let reloadRNG = CountingRNG(seed: 1)
@@ -1001,7 +973,7 @@ final class CompanionStoreTests: XCTestCase {
                         burnTier: .idle, limitWarning: false, hasUsageData: true)
         let reloadedLine = await waitUntil { reloaded.currentLine != nil }
         XCTAssertTrue(reloadedLine)
-        XCTAssertEqual(reloaded.state.active?.plannedPathIDs, migratedPlan, "migration must persist its one-time choice")
+        XCTAssertEqual(reloaded.trainingMon?.plannedPathIDs, migratedPlan, "migration must persist its one-time choice")
         XCTAssertEqual(reloadRNG.callCount, 0, "a persisted complete route must not reroll on restart")
     }
 
@@ -1016,11 +988,11 @@ final class CompanionStoreTests: XCTestCase {
         let loaded = await waitUntil { s.currentLine != nil }
         XCTAssertTrue(loaded)
 
-        XCTAssertEqual(s.state.active?.pathIDs, [265, 266])
-        XCTAssertEqual(s.state.active?.plannedPathIDs, [265, 266, 267])
-        XCTAssertEqual(s.state.active?.stageIndex, 1)
-        XCTAssertEqual(s.state.active?.totalForms, 3)
-        XCTAssertEqual(s.state.active?.usedAtStage, 42)
+        XCTAssertEqual(s.trainingMon?.pathIDs, [265, 266])
+        XCTAssertEqual(s.trainingMon?.plannedPathIDs, [265, 266, 267])
+        XCTAssertEqual(s.trainingMon?.stageIndex, 1)
+        XCTAssertEqual(s.trainingMon?.totalForms, 3)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 42)
     }
 
     func testReloadWrongRootNormalizesPathWithoutChangingIdentityOrDisguise() async throws {
@@ -1034,13 +1006,13 @@ final class CompanionStoreTests: XCTestCase {
         let loaded = await waitUntil { s.currentLine != nil }
         XCTAssertTrue(loaded)
 
-        XCTAssertEqual(s.state.active?.pathIDs, [265])
-        XCTAssertTrue([[265, 266, 267], [265, 268, 269]].contains(s.state.active?.plannedPathIDs ?? []))
-        XCTAssertEqual(s.state.active?.usedAtStage, 42)
-        XCTAssertTrue(s.state.active?.isShiny ?? false)
-        XCTAssertEqual(s.state.active?.nature, .timid)
-        XCTAssertEqual(s.state.active?.dittoDisguise, 265)
-        XCTAssertFalse(s.state.active?.dittoRevealed ?? true)
+        XCTAssertEqual(s.trainingMon?.pathIDs, [265])
+        XCTAssertTrue([[265, 266, 267], [265, 268, 269]].contains(s.trainingMon?.plannedPathIDs ?? []))
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 42)
+        XCTAssertTrue(s.trainingMon?.isShiny ?? false)
+        XCTAssertEqual(s.trainingMon?.nature, .timid)
+        XCTAssertEqual(s.trainingMon?.dittoDisguise, 265)
+        XCTAssertFalse(s.trainingMon?.dittoRevealed ?? true)
     }
 
     func testReloadLeafCurrentPlanDoesNotConsumeRNG() async throws {
@@ -1055,8 +1027,8 @@ final class CompanionStoreTests: XCTestCase {
         let loaded = await waitUntil { s.currentLine != nil }
         XCTAssertTrue(loaded)
 
-        XCTAssertEqual(s.state.active?.pathIDs, [265, 266, 267])
-        XCTAssertEqual(s.state.active?.plannedPathIDs, [265, 266, 267])
+        XCTAssertEqual(s.trainingMon?.pathIDs, [265, 266, 267])
+        XCTAssertEqual(s.trainingMon?.plannedPathIDs, [265, 266, 267])
         XCTAssertEqual(rng.callCount, 0)
     }
 
@@ -1078,18 +1050,18 @@ final class CompanionStoreTests: XCTestCase {
 
         s.applyUsage(42)
         let changedNature = try XCTUnwrap(s.useMint())
-        XCTAssertEqual(s.state.active?.usedAtStage, 42)
-        XCTAssertEqual(s.state.active?.nature, changedNature)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 42)
+        XCTAssertEqual(s.trainingMon?.nature, changedNature)
 
         await provider.resume()
         let loaded = await waitUntil { s.currentLine != nil }
         XCTAssertTrue(loaded)
 
-        XCTAssertEqual(s.state.active?.usedAtStage, 42)
-        XCTAssertEqual(s.state.active?.nature, changedNature)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 42)
+        XCTAssertEqual(s.trainingMon?.nature, changedNature)
         let persisted = try JSONDecoder().decode(CompanionState.self, from: Data(contentsOf: url))
-        XCTAssertEqual(persisted.active?.usedAtStage, 42)
-        XCTAssertEqual(persisted.active?.nature, changedNature)
+        XCTAssertEqual(persisted.party.first?.usedAtStage, 42)
+        XCTAssertEqual(persisted.party.first?.nature, changedNature)
     }
 
     func testLocalizedName() async {
@@ -1107,18 +1079,125 @@ final class CompanionStoreTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("poke-asym-\(UUID().uuidString).json")
         let s = CompanionStore(provider: StubProvider(value: line), clock: { fixedNow }, fileURL: url, rng: SeededRNG(seed: 7))
         await s.hatch(baseID: 1)
-        XCTAssertEqual(s.state.active?.totalForms, s.state.active?.plannedPathIDs.count,
+        XCTAssertEqual(s.trainingMon?.totalForms, s.trainingMon?.plannedPathIDs.count,
                        "totalForms = 선택된 계획 경로 길이")
         var guardCount = 0
-        while s.state.active != nil, guardCount < 12 {
+        while s.trainingMon != nil, guardCount < 12 {
             guardCount += 1
-            let stage = s.state.active!.stageIndex
-            s.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: s.state.active!.totalForms, stageIndex: stage))
+            let stage = s.trainingMon!.stageIndex
+            s.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: s.trainingMon!.totalForms, stageIndex: stage))
         }
-        XCTAssertNil(s.state.active, "어느 분기든 최종체에서 졸업(크래시·무한루프 없음)")
+        XCTAssertNil(s.trainingMon, "어느 분기든 최종체에서 졸업(크래시·무한루프 없음)")
         XCTAssertEqual(s.dexEntries.count, 1)
         let chain = s.dexEntries[0].chainOrder
         XCTAssertTrue(chain == [1, 2] || chain == [1, 3, 4], "실제 진화 경로 보존: \(chain)")
+    }
+
+    // MARK: PC — 훈련 대상 전환 (setTrainingSlot)
+
+    /// 두 마리를 소유한 상태를 만든다 — 부화를 두 번 직접 호출한다(`hatch(baseID:)`는 eggUsage/임계와
+    /// 무관하게 즉시 결정적으로 끝나므로 update() 의 내부 auto-hatch Task 와 경합할 여지가 없다).
+    /// 두 번째 부화가 훈련 슬롯을 자연히 가져가므로, 첫 번째는 폐기되지 않은 채 PC 에 남는다 —
+    /// "소유했지만 지금은 훈련 중이 아닌" 상태를 별도 구매 없이 만드는 가장 단순한 방법.
+    private func twoOwnedMons(_ s: CompanionStore) async -> (first: MonState, second: MonState) {
+        await s.hatch(baseID: 900)
+        let first = s.trainingMon!
+        await s.hatch(baseID: 900)
+        let second = s.trainingMon!
+        return (first, second)
+    }
+
+    /// 전설(졸업 총량 6B)로 자금을 대 준다 — 상용 1B 알보다 훨씬 커서, 구매를 감당할 만큼 벌어도
+    /// 지금 훈련 중인 개체가 그 김에 졸업해버리는 부작용이 없다(도감 커먼 3형태였다면 750M 만에 졸업해
+    /// buyFreshEgg 를 부르기도 전에 훈련 슬롯이 스스로 풀려버렸을 것이다).
+    private func fundForOneMoreEggPurchase(_ s: CompanionStore) {
+        base(s)
+        use(s, 2_000_000_000)
+    }
+
+    func testSetTrainingSlotSwitchesToOwnedPartyMember() async {
+        let s = store(legendarySingle)
+        let (first, second) = await twoOwnedMons(s)
+        XCTAssertEqual(s.trainingMon?.id, second.id, "두 번째 부화 직후엔 그 개체가 훈련 중")
+
+        XCTAssertTrue(s.setTrainingSlot(to: first.id))
+        XCTAssertEqual(s.trainingMon?.id, first.id, "무료 전환 — 알 소모 없이 소유한 개체로 바뀐다")
+        XCTAssertEqual(s.party.count, 2, "전환은 파티 구성을 바꾸지 않는다")
+    }
+
+    func testSetTrainingSlotNoOpsWhenTargetIsAlreadyTrainingUnknownOrNoSlotOpen() async {
+        let s = store(legendarySingle)
+        let (first, second) = await twoOwnedMons(s)
+
+        XCTAssertFalse(s.setTrainingSlot(to: second.id), "이미 훈련 중인 개체로의 전환은 no-op")
+        XCTAssertEqual(s.trainingMon?.id, second.id)
+
+        XCTAssertFalse(s.setTrainingSlot(to: "no-such-id"), "소유하지 않은 id 는 거부")
+        XCTAssertEqual(s.trainingMon?.id, second.id, "실패한 시도가 상태를 건드리면 안 된다")
+
+        fundForOneMoreEggPurchase(s)
+        XCTAssertTrue(s.buyFreshEgg())   // 알 인큐베이션 중 — 훈련 슬롯 없음
+        XCTAssertFalse(s.setTrainingSlot(to: first.id), "알 상태에선 전환할 훈련 슬롯 자체가 없다")
+    }
+
+    /// [회귀] `loadCurrentLine` 이 이전 훈련 개체의 라인 fetch 대기 창에 있을 때 setTrainingSlot 이
+    /// 들어오면, 뒤늦게 끝난 그 fetch 가 새로 전환한 개체를 덮어쓰면 안 된다 — activeGeneration 게이트가
+    /// hatch/import 레이스를 막는 것과 같은 패턴을 setTrainingSlot 에도 적용했는지 고정한다.
+    func testSetTrainingSlotDiscardsStaleLineLoadForPreviousTrainingMon() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("poke-slotrace-\(UUID().uuidString).json")
+        let monA = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1], stageIndex: 0, usedAtStage: 0,
+                            rarity: .common, totalForms: 1)
+        let monB = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1], stageIndex: 0, usedAtStage: 0,
+                            rarity: .common, totalForms: 1)
+        var seed = CompanionState()
+        seed.installBaselineSet = true
+        seed.party = [monA, monB]
+        seed.trainingSlotID = monA.id
+        try JSONEncoder().encode(seed).write(to: url)
+
+        let provider = SuspendedLineProvider(value: linear3)
+        let s = CompanionStore(provider: provider, clock: { fixedNow }, fileURL: url, rng: SeededRNG(seed: 7))
+
+        // 최초 update 가 monA 의 loadCurrentLine 을 킥한다 — provider 가 라인 fetch 에서 멈춘다.
+        s.update(todayTokensByProvider: ["test": 0], todayDate: "d1", monthTotal: 0,
+                 burnTier: .idle, limitWarning: false, hasUsageData: true)
+        let deadline = Date().addingTimeInterval(1)
+        while !(await provider.isSuspended()), Date() < deadline {
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        let isSuspended = await provider.isSuspended()
+        XCTAssertTrue(isSuspended, "monA 의 라인 fetch 가 대기 중이어야 한다")
+
+        XCTAssertTrue(s.setTrainingSlot(to: monB.id), "monA 의 fetch 가 걸려 있어도 전환 자체는 즉시 성공해야 한다")
+        XCTAssertEqual(s.trainingMon?.id, monB.id)
+
+        await provider.resume()   // monA 의 늦은 fetch 완료
+        // 늦게 끝난 monA 결과가 반영될 시간을 준다 — 반영되면 버그(세대 불일치 무시).
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(s.trainingMon?.id, monB.id, "늦게 끝난 monA fetch 가 전환을 덮어쓰면 안 된다")
+    }
+
+    // MARK: PC — 도감(dexUnlocked) 영속성
+
+    /// [PC 리팩터] 종 도달은 그 개체가 계속 훈련 중인지와 무관하게 영구히 남는다 — 벤치하거나
+    /// 훈련 대상을 다른 개체로 옮겨도 이미 언락한 종은 dexUnlocked 에서 사라지지 않는다.
+    /// (거래 자체는 이 리팩터의 범위 밖이지만, "거래로 잃어도 유지" 라는 요구가 기대는 바로 이 성질이다.)
+    func testDexUnlockedSurvivesTrainingSwitchAndBenching() async {
+        let s = store(legendarySingle)
+        let (first, second) = await twoOwnedMons(s)
+        XCTAssertTrue(s.state.dexUnlocked.keys.contains(900), "첫 마리가 부화한 종(900)은 이미 언락돼 있어야 한다")
+
+        // 첫 마리로 훈련 대상을 되돌린 뒤 다시 두 번째로 전환해도 언락은 그대로다.
+        XCTAssertTrue(s.setTrainingSlot(to: first.id))
+        XCTAssertTrue(s.setTrainingSlot(to: second.id))
+        XCTAssertTrue(s.state.dexUnlocked.keys.contains(900), "전환을 반복해도 영구 언락은 지워지지 않는다")
+
+        fundForOneMoreEggPurchase(s)
+        XCTAssertTrue(s.buyFreshEgg())   // second 를 벤치 — 폐기가 아니다
+        XCTAssertTrue(s.state.dexUnlocked.keys.contains(900), "벤치해도(폐기가 아니므로) 언락은 유지된다")
+        XCTAssertTrue(s.party.contains { $0.id == first.id } && s.party.contains { $0.id == second.id },
+                     "둘 다 여전히 PC 에 있어야 한다")
     }
 }
 
@@ -1239,8 +1318,8 @@ final class CompanionIdentityTests: XCTestCase {
             let s = store(linear3, seed: seed)
             let expected = expectedRoll(seed: seed)
             await s.hatch(baseID: 1)
-            XCTAssertEqual(s.state.active?.isShiny, expected.shiny, "seed \(seed)")
-            XCTAssertEqual(s.state.active?.nature, expected.nature, "seed \(seed)")
+            XCTAssertEqual(s.trainingMon?.isShiny, expected.shiny, "seed \(seed)")
+            XCTAssertEqual(s.trainingMon?.nature, expected.nature, "seed \(seed)")
         }
     }
 
@@ -1251,7 +1330,7 @@ final class CompanionIdentityTests: XCTestCase {
         guard let seed = shinySeed else { return XCTFail("5000개 시드 중 shiny 없음 — 분모 확인") }
         let s = store(linear3, seed: seed)
         await s.hatch(baseID: 1)
-        XCTAssertEqual(s.state.active?.isShiny, true)
+        XCTAssertEqual(s.trainingMon?.isShiny, true)
         XCTAssertTrue(s.currentIsShiny)
     }
 
@@ -1259,11 +1338,11 @@ final class CompanionIdentityTests: XCTestCase {
     func testGraduateCarriesIdentityToDex() async {
         let s = store(noEvo, seed: 3)   // 무진화 → 임계 도달 시 바로 졸업
         await s.hatch(baseID: 20)
-        let shiny = s.state.active!.isShiny
-        let nature = s.state.active!.nature
+        let shiny = s.trainingMon!.isShiny
+        let nature = s.trainingMon!.nature
         XCTAssertNotNil(nature)
         s.applyUsage(PokemonBalance.graduationTotal(.common))
-        XCTAssertNil(s.state.active)   // 졸업
+        XCTAssertNil(s.trainingMon)   // 졸업
         XCTAssertEqual(s.state.dex.count, 1)
         XCTAssertEqual(s.state.dex[0].isShiny, shiny)
         XCTAssertEqual(s.state.dex[0].nature, nature)
@@ -1279,15 +1358,26 @@ final class CompanionIdentityTests: XCTestCase {
          "collectedFinals":["4:6"],"language":"ko"}
         """
         let s = try JSONDecoder().decode(CompanionState.self, from: Data(old.utf8))
-        XCTAssertEqual(s.active?.plannedPathIDs, [1])
-        XCTAssertEqual(s.active?.isShiny, false)
-        XCTAssertNil(s.active?.nature)
+        XCTAssertEqual(s.party.count, 1, "구버전 단일 active 가 party 의 첫 원소로 승격돼야 한다")
+        XCTAssertEqual(s.trainingSlotID, s.party.first?.id, "승격된 개체가 곧 훈련 슬롯이어야 한다")
+        XCTAssertEqual(s.party.first?.plannedPathIDs, [1])
+        XCTAssertEqual(s.party.first?.isShiny, false)
+        XCTAssertNil(s.party.first?.nature)
         XCTAssertNil(s.claimedTodayTokensByProvider, "구버전 aggregate ledger는 프로바이더별 값으로 추정하지 않는다")
+        // 마이그레이션이 기존 dex(졸업 기록)에 active 용 포획 로그 행을 하나 더 추가한다.
+        XCTAssertEqual(s.dex.count, 2)
         XCTAssertEqual(s.dex[0].isShiny, false)
         XCTAssertNil(s.dex[0].nature)
-        // 재인코딩 후 재디코딩도 안정적(라운드트립)
+        let migratedRow = try XCTUnwrap(s.dex.first { $0.monID == s.trainingSlotID })
+        XCTAssertEqual(migratedRow.baseID, 1)
+        XCTAssertEqual(migratedRow.source, .egg)
+        // 졸업 기록(4→5→6)과 active 도달분(1)이 모두 영구 도감으로 접혀 들어가야 한다.
+        XCTAssertEqual(Set(s.dexUnlocked.keys), [4, 5, 6, 1])
+        XCTAssertEqual(s.dexUnlocked[6]?.rarity, .rare)
+        // 재인코딩 후 재디코딩도 안정적(라운드트립) — 이번엔 신규 포맷이라 마이그레이션을 다시 타지 않는다.
         let round = try JSONDecoder().decode(CompanionState.self, from: JSONEncoder().encode(s))
-        XCTAssertEqual(round.active?.isShiny, false)
+        XCTAssertEqual(round.party.first?.isShiny, false)
+        XCTAssertEqual(round.dex.count, 2, "라운드트립에서 마이그레이션 행이 중복 추가되면 안 된다")
     }
 
     /// [출시 안전] 손상된 상태 파일: active.pathIDs 가 비면 그 active 만 nil(알)로 폴백하되 나머지 상태는
@@ -1300,7 +1390,8 @@ final class CompanionIdentityTests: XCTestCase {
         """
         let state = try? JSONDecoder().decode(CompanionState.self, from: Data(corrupt.utf8))
         XCTAssertNotNil(state, "빈 pathIDs 는 active 만 무효화 — 전체 디코드는 성공(부분 복원)")
-        XCTAssertNil(state?.active, "빈 pathIDs active 는 nil(알)로 폴백 — 깨진 active 를 살려두지 않는다")
+        XCTAssertEqual(state?.party.count, 0, "빈 pathIDs active 는 party 를 비운다(알) — 깨진 개체를 살려두지 않는다")
+        XCTAssertNil(state?.trainingSlotID)
         XCTAssertEqual(state?.installBaselineSet, true, "나머지 필드는 보존")
     }
 
@@ -1340,23 +1431,23 @@ final class CompanionIdentityTests: XCTestCase {
                                 fileURL: url, rng: SeededRNG(seed: 5))
         s1.update(todayTokensByProvider: ["test": 0], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
         await s1.hatch(baseID: 1)
-        XCTAssertNotNil(s1.state.active)
+        XCTAssertNotNil(s1.trainingMon)
 
         // 2차 스토어(재시작 시뮬레이션): active 는 로드됐지만 currentLine 은 nil
         let s2 = CompanionStore(provider: StubProvider(value: linear3), clock: { fixedNow },
                                 fileURL: url, rng: SeededRNG(seed: 5))
-        XCTAssertNotNil(s2.state.active)
+        XCTAssertNotNil(s2.trainingMon)
         XCTAssertNil(s2.currentLine)
         // 라인 없는 상태에서 stage0 임계(125M) 초과 델타 → 유실 없이 적립, 진화는 보류
         s2.applyUsage(300_000_000)
-        XCTAssertEqual(s2.state.active?.usedAtStage, 300_000_000, "라인 미로딩 중 델타가 유실되면 안 된다")
-        XCTAssertEqual(s2.state.active?.stageIndex, 0)
+        XCTAssertEqual(s2.trainingMon?.usedAtStage, 300_000_000, "라인 미로딩 중 델타가 유실되면 안 된다")
+        XCTAssertEqual(s2.trainingMon?.stageIndex, 0)
         // update → loadCurrentLine 완료 시 적립분으로 진화 판정(드레인)
         s2.update(todayTokensByProvider: ["test": 0], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
         for _ in 0..<50 where s2.currentLine == nil { await Task.yield() }
         XCTAssertNotNil(s2.currentLine)
-        XCTAssertEqual(s2.state.active?.stageIndex, 1, "라인 로드 후 적립분으로 진화해야 한다")
-        XCTAssertEqual(s2.state.active?.usedAtStage, 300_000_000 - 125_000_000)   // 초과분 이월
+        XCTAssertEqual(s2.trainingMon?.stageIndex, 1, "라인 로드 후 적립분으로 진화해야 한다")
+        XCTAssertEqual(s2.trainingMon?.usedAtStage, 300_000_000 - 125_000_000)   // 초과분 이월
     }
 
     /// [회귀] 구버전 상태가 GIF 미지원 후대 진화형까지 진행했어도, 라인 재로딩 시 마지막 지원 형태로
@@ -1374,11 +1465,11 @@ final class CompanionIdentityTests: XCTestCase {
         for _ in 0..<50 where s.currentLine == nil { await Task.yield() }
 
         XCTAssertNotNil(s.currentLine)
-        XCTAssertEqual(s.state.active?.pathIDs, [56, 57])
-        XCTAssertEqual(s.state.active?.plannedPathIDs, [56, 57])
-        XCTAssertEqual(s.state.active?.stageIndex, 1)
-        XCTAssertEqual(s.state.active?.totalForms, 2)
-        XCTAssertEqual(s.state.active?.usedAtStage, 123)
+        XCTAssertEqual(s.trainingMon?.pathIDs, [56, 57])
+        XCTAssertEqual(s.trainingMon?.plannedPathIDs, [56, 57])
+        XCTAssertEqual(s.trainingMon?.stageIndex, 1)
+        XCTAssertEqual(s.trainingMon?.totalForms, 2)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 123)
     }
 
     /// [회귀] 부화 이월(overflow)로 즉시 진화해도 마지막 연출은 hatch(shiny) — evolve 가 버스트를 덮지 않는다.
@@ -1398,8 +1489,8 @@ final class CompanionIdentityTests: XCTestCase {
         // 알 임계(5M) + stage0 임계(125M) 초과 → 부화 즉시 1회 진화하는 이월
         s.update(todayTokensByProvider: ["test": 135_000_000], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
         await s.hatchIfNeeded()
-        XCTAssertEqual(s.state.active?.isShiny, true)
-        XCTAssertEqual(s.state.active?.stageIndex, 1, "이월로 1회 진화했어야 함")
+        XCTAssertEqual(s.trainingMon?.isShiny, true)
+        XCTAssertEqual(s.trainingMon?.stageIndex, 1, "이월로 1회 진화했어야 함")
         XCTAssertEqual(s.celebration, .hatch(shiny: true), "evolve 가 shiny 부화 버스트를 덮으면 안 된다")
     }
 
@@ -1410,7 +1501,7 @@ final class CompanionIdentityTests: XCTestCase {
         // 알 임계 + 졸업 총량(750M) 초과
         s.update(todayTokensByProvider: ["test": 800_000_000], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
         await s.hatchIfNeeded()
-        XCTAssertNil(s.state.active, "즉시 졸업")
+        XCTAssertNil(s.trainingMon, "즉시 졸업")
         XCTAssertEqual(s.state.dex.count, 1)
         XCTAssertNil(s.celebration, "떠난 mon 의 hatch 연출을 재생하면 안 된다")
     }
@@ -1446,7 +1537,7 @@ final class CompanionIdentityTests: XCTestCase {
             let p = IndexProvider(); p.index = index
             let s = samplerStore(p, seed: seed, preloadState: eggReadyState())
             await s.hatchIfNeeded()
-            XCTAssertEqual(s.state.active?.baseID, expected, "seed \(seed) roll \(roll)")
+            XCTAssertEqual(s.trainingMon?.baseID, expected, "seed \(seed) roll \(roll)")
         }
     }
 
@@ -1466,7 +1557,7 @@ final class CompanionIdentityTests: XCTestCase {
             let p = IndexProvider(); p.index = index
             let s = samplerStore(p, seed: seed, preloadState: eggReadyState())
             await s.hatchIfNeeded()
-            XCTAssertEqual(s.state.active?.baseID, expected)
+            XCTAssertEqual(s.trainingMon?.baseID, expected)
         }
     }
 
@@ -1488,12 +1579,12 @@ final class CompanionIdentityTests: XCTestCase {
         let p1 = IndexProvider(); p1.index = index
         let s1 = samplerStore(p1, seed: seed, preloadState: eggReadyState())
         await s1.hatchIfNeeded()
-        XCTAssertEqual(s1.state.active?.baseID, 1)
+        XCTAssertEqual(s1.trainingMon?.baseID, 1)
         // id=1 수집 후: 같은 시드가 id=2 구간으로 밀림 (가중치 ½ 효과)
         let p2 = IndexProvider(); p2.index = index
         let s2 = samplerStore(p2, seed: seed, preloadState: eggReadyState(collected: ["1:1"]))
         await s2.hatchIfNeeded()
-        XCTAssertEqual(s2.state.active?.baseID, 2, "수집済 가중치 ½ 로 선택 구간이 이동해야 한다")
+        XCTAssertEqual(s2.trainingMon?.baseID, 2, "수집済 가중치 ½ 로 선택 구간이 이동해야 한다")
     }
 
     /// 알 상태 프리패칭 — update 틱에 종이 pre-roll 되어 영속되고, 부화는 pending 을 그대로 사용.
@@ -1511,9 +1602,9 @@ final class CompanionIdentityTests: XCTestCase {
         // 임계 도달 → 부화는 pending 그대로 (추가 선택 롤 없음: shiny/nature 만 소비)
         s.update(todayTokensByProvider: ["test": 6_000_000], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
         await s.hatchIfNeeded()
-        XCTAssertEqual(s.state.active?.baseID, 77)
+        XCTAssertEqual(s.trainingMon?.baseID, 77)
         XCTAssertNil(s.state.pendingHatchID, "부화 후 pending 은 비워져야 한다")
-        XCTAssertNotNil(s.state.active?.nature)
+        XCTAssertNotNil(s.trainingMon?.nature)
     }
 
     /// 프리패칭이 오프라인으로 실패해도 부화 시점 롤로 폴백 — 알이 막히지 않는다.
@@ -1526,16 +1617,16 @@ final class CompanionIdentityTests: XCTestCase {
         for _ in 0..<10 { await Task.yield() }        // 프리패치 시도 소진(실패)
         XCTAssertNil(s.state.pendingHatchID)
         await s.hatchIfNeeded()                        // 여전히 오프라인 → 알 유지
-        XCTAssertNil(s.state.active)
+        XCTAssertNil(s.trainingMon)
         p.failAll = false                              // 네트워크 복구
         // 초기 update() 가 띄운 프리패치 Task 가 아직 in-flight 면 hatchIfNeeded 가 prefetchInFlight
         // 가드로 조기 반환할 수 있다(고정 yield 횟수로는 CI 스케줄 지연에서 못 소진 — 플래키 원인).
         // 부화할 때까지 재시도해 결정적으로 만든다(in-flight 는 몇 틱 내 실패로 해제됨).
-        for _ in 0..<50 where s.state.active == nil {
+        for _ in 0..<50 where s.trainingMon == nil {
             await s.hatchIfNeeded()                    // 부화 시점 롤 폴백
             await Task.yield()
         }
-        XCTAssertEqual(s.state.active?.baseID, 88)
+        XCTAssertEqual(s.trainingMon?.baseID, 88)
     }
 
     /// 오프라인(인덱스 취득 실패) — 알 진행 보존, isHatching 해제, 다음 틱 재시도 가능.
@@ -1544,7 +1635,7 @@ final class CompanionIdentityTests: XCTestCase {
         p.failAll = true
         let s = samplerStore(p, seed: 1, preloadState: eggReadyState())
         await s.hatchIfNeeded()
-        XCTAssertNil(s.state.active)
+        XCTAssertNil(s.trainingMon)
         XCTAssertGreaterThanOrEqual(s.state.eggUsage, PokemonBalance.eggHatchThreshold, "알 진행 보존")
         XCTAssertFalse(s.isHatching)
     }

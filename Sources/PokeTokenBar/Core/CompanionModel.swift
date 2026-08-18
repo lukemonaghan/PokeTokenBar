@@ -109,6 +109,24 @@ enum PokemonBalance {
         let denom = Double(kk * (kk + 1)) / 2.0
         return Int((total * Double(i) / denom).rounded())
     }
+
+    /// 이 개체가 지금까지 누적 투입한 토큰 — 이미 통과한 단계들의 phaseThreshold 합 + 현재 단계 진행분.
+    /// usedAtStage 는 단계마다 이월(진화 시 초과분만 남김)되므로, 레벨 표시엔 이 누적값을 써야 한다.
+    static func cumulativeXP(rarity: Rarity, totalForms: Int, stageIndex: Int, usedAtStage: Int) -> Int {
+        var sum = 0
+        for i in 0..<max(0, stageIndex) { sum += phaseThreshold(rarity: rarity, totalForms: totalForms, stageIndex: i) }
+        return sum + max(0, usedAtStage)
+    }
+
+    /// 표시 전용 레벨(Lv.1~100) — 진화 타이밍에는 관여하지 않는다(그건 여전히 phaseThreshold 가 정한다).
+    /// 부화 직후 1, 졸업(누적 = graduationTotal) 무렵 100 에 도달하도록 기존 밸런스 상수를 그대로 재사용한다.
+    static func level(rarity: Rarity, totalForms: Int, stageIndex: Int, usedAtStage: Int) -> Int {
+        let total = graduationTotal(rarity)
+        guard total > 0 else { return 1 }
+        let xp = cumulativeXP(rarity: rarity, totalForms: totalForms, stageIndex: stageIndex, usedAtStage: usedAtStage)
+        let frac = min(1.0, Double(xp) / Double(total))
+        return 1 + Int((99.0 * frac).rounded(.down))
+    }
 }
 
 /// 인벤토리 아이템 종류 — 확장 대비 enum(현재 이상한 사탕 1종). rawValue 로 CompanionState.inventory 에 저장.
@@ -368,8 +386,15 @@ enum PokemonOdds {
     static let dittoSpeciesID = 132
 }
 
-/// 현재 키우는 포켓몬.
-struct MonState: Codable, Sendable {
+/// 포켓몬 개체가 세이브에 합류한 경로 — 알/거래. 거래는 상대 표시 이름을 함께 담는다(알 수 없으면 nil).
+enum AcquisitionSource: Codable, Sendable, Equatable {
+    case egg
+    case trade(from: String?)
+}
+
+/// 현재 키우는 포켓몬. PC(파티) 배열의 원소 — `id` 로 개체를 식별한다(진화해도 고정).
+struct MonState: Codable, Sendable, Identifiable {
+    var id: String = UUID().uuidString
     var baseID: Int
     var pathIDs: [Int]      // 실제 진화 경로(분기 선택 반영)
     var plannedPathIDs: [Int] // 사전에 선택한 전체 진화 경로
@@ -382,12 +407,18 @@ struct MonState: Codable, Sendable {
     // 메타몽 위장 — nil=일반. 값=정체 메타몽, 이 종으로 위장 중(위장 구간엔 baseID 와 동일, 리빌 후에도 원 위장체 보존).
     var dittoDisguise: Int?
     var dittoRevealed = false       // 위장 → 리빌(정체 공개) 전환 여부
+    var acquiredAt: Date = Date()   // 파티 합류 시각(구버전 세이브는 마이그레이션 시각으로 근사)
+    var acquiredVia: AcquisitionSource = .egg
     // pathIDs 가 비면(손상된 상태 파일) baseID 로 폴백 — 렌더마다 읽히므로 out-of-bounds 크래시 방지.
     var currentID: Int { pathIDs.isEmpty ? baseID : pathIDs[min(stageIndex, pathIDs.count - 1)] }
+    /// 표시 전용 레벨(Lv.1~100) — PokemonBalance.level 참고.
+    var level: Int { PokemonBalance.level(rarity: rarity, totalForms: totalForms, stageIndex: stageIndex, usedAtStage: usedAtStage) }
 
-    init(baseID: Int, pathIDs: [Int], plannedPathIDs: [Int]? = nil, stageIndex: Int, usedAtStage: Int,
-         rarity: Rarity, totalForms: Int, isShiny: Bool = false, nature: PokemonNature? = nil,
-         dittoDisguise: Int? = nil, dittoRevealed: Bool = false) {
+    init(id: String = UUID().uuidString, baseID: Int, pathIDs: [Int], plannedPathIDs: [Int]? = nil,
+         stageIndex: Int, usedAtStage: Int, rarity: Rarity, totalForms: Int, isShiny: Bool = false,
+         nature: PokemonNature? = nil, dittoDisguise: Int? = nil, dittoRevealed: Bool = false,
+         acquiredAt: Date = Date(), acquiredVia: AcquisitionSource = .egg) {
+        self.id = id
         self.baseID = baseID
         self.pathIDs = pathIDs
         if let plannedPathIDs, !plannedPathIDs.isEmpty {
@@ -403,11 +434,14 @@ struct MonState: Codable, Sendable {
         self.nature = nature
         self.dittoDisguise = dittoDisguise
         self.dittoRevealed = dittoRevealed
+        self.acquiredAt = acquiredAt
+        self.acquiredVia = acquiredVia
     }
 
-    // 하위호환 디코딩: shiny/nature 는 구버전 저장에 없음 → 기본값.
+    // 하위호환 디코딩: shiny/nature/id/acquiredAt/acquiredVia 는 구버전 저장에 없음 → 기본값.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         baseID = try c.decode(Int.self, forKey: .baseID)
         pathIDs = try c.decode([Int].self, forKey: .pathIDs)
         // 빈 pathIDs 는 손상 상태 → 디코드 실패시켜 전체 CompanionState 가 기본(알)로 폴백되게 한다.
@@ -428,6 +462,8 @@ struct MonState: Codable, Sendable {
         nature = try c.decodeIfPresent(PokemonNature.self, forKey: .nature)
         dittoDisguise = try c.decodeIfPresent(Int.self, forKey: .dittoDisguise)
         dittoRevealed = try c.decodeIfPresent(Bool.self, forKey: .dittoRevealed) ?? false
+        acquiredAt = (try? c.decodeIfPresent(Date.self, forKey: .acquiredAt)) ?? Date()
+        acquiredVia = (try? c.decodeIfPresent(AcquisitionSource.self, forKey: .acquiredVia)) ?? .egg
     }
 }
 
@@ -445,11 +481,16 @@ struct DexEntry: Codable, Sendable, Identifiable {
     /// 도감의 단계별 스프라이트 밑 이름 표시가 네트워크 없이 즉시 + 언어 전환 대응. 구버전 저장분엔
     /// 없어(nil) 뷰가 line fetch 로 조회 후 백필한다.
     var names: [Int: [String: String]]?
+    /// 이 로그 행이 가리키는 살아있는 파티 개체 — nil 이면 그 개체가 더는 없거나(구버전 졸업 기록) 마이그레이션
+    /// 이전 데이터. `CompanionStore.isTrainingLogEntry` 가 "지금 훈련 중인 개체"를 판별하는 데 쓴다.
+    var monID: String?
+    /// 이 개체가 세이브에 합류한 경로(알/거래) — 포획 로그 행에 "알로/거래로" 표시용.
+    var source: AcquisitionSource = .egg
 
     init(id: String = UUID().uuidString,
          baseID: Int, finalID: Int, chainOrder: [Int], rarity: Rarity,
          caughtAt: Date?, isShiny: Bool = false, nature: PokemonNature? = nil,
-         names: [Int: [String: String]]? = nil) {
+         names: [Int: [String: String]]? = nil, monID: String? = nil, source: AcquisitionSource = .egg) {
         self.id = id
         self.baseID = baseID
         self.finalID = finalID
@@ -459,6 +500,8 @@ struct DexEntry: Codable, Sendable, Identifiable {
         self.isShiny = isShiny
         self.nature = nature
         self.names = names
+        self.monID = monID
+        self.source = source
     }
 
     // 하위호환 디코딩 (MonState 와 동일 이유).
@@ -475,7 +518,18 @@ struct DexEntry: Codable, Sendable, Identifiable {
         // try? — 구버전(최종체 단일 [String:String]) 형식이 남아 있어도 종별 맵 디코딩 실패 시 nil 로
         // 강등(항목 전체 로드는 유지). 뷰가 line 조회로 백필한다.
         names = (try? c.decodeIfPresent([Int: [String: String]].self, forKey: .names)) ?? nil
+        monID = (try? c.decodeIfPresent(String.self, forKey: .monID)) ?? nil
+        source = (try? c.decodeIfPresent(AcquisitionSource.self, forKey: .source)) ?? .egg
     }
+}
+
+/// 도감(종 단위) 영구 언락 기록 — 한 번 도달하면 그 개체를 나중에 잃어도(거래 등) 지워지지 않는다.
+/// `baseID` 는 이름 백필(`provider.line(baseSpeciesID:)`) 조회에 필요해 별도 보관한다.
+struct DexUnlock: Codable, Sendable {
+    let baseID: Int
+    let rarity: Rarity
+    var names: [String: String]?
+    var isShiny: Bool
 }
 
 /// 배열 항목별 격리 디코딩 래퍼 — 손상된 한 항목이 배열 전체(및 상위 상태) 디코드를 실패시키지 않게.
@@ -495,6 +549,11 @@ private extension KeyedDecodingContainer {
         try? decode(type, forKey: key)
     }
 }
+
+/// 구버전 세이브의 `active` 키만 읽기 위한 별도 CodingKey — `CompanionState` 에서 `active` 는 더 이상
+/// 저장 프로퍼티가 아니라 합성 CodingKeys 에 없다. 같은 디코더에서 별도 keyed container 를 여는 것은
+/// 표준 Codable 패턴(같은 JSON 객체를 두 키 집합으로 각각 읽음)이라 안전하다.
+private enum LegacyCompanionKeys: String, CodingKey { case active }
 
 /// 영속 상태(Application Support JSON). 포켓몬 전환 — 이전 커스텀 캐릭터 상태는 폐기(새로 시작).
 struct CompanionState: Codable, Sendable {
@@ -521,10 +580,13 @@ struct CompanionState: Codable, Sendable {
     /// 키는 `UsageProvider.id`를 그대로 사용한다.
     var claimedTodayTokensByProvider: [String: Int]? = nil
     var lastDate = ""
-    // 현재 포켓몬(없으면 알)
-    var active: MonState?
-    // 도감
+    // PC — 소유한 모든 포켓몬. 훈련 중(토큰 사용량을 받는) 개체는 trainingSlotID 로 가리킨다.
+    var party: [MonState] = []
+    var trainingSlotID: String?
+    // 포획 로그 — 개체가 파티에 합류한 시점(알/거래) 1행. dexEntriesSorted 가 시각순으로 보여준다.
     var dex: [DexEntry] = []
+    // 도감(종 단위) 영구 언락 — 한 번 도달한 종은 그 개체를 나중에 잃어도(거래) 지워지지 않는다.
+    var dexUnlocked: [Int: DexUnlock] = [:]
     // 소유한 (base,final) 쌍 — 분기 다양성용
     var collectedFinals: Set<String> = []
     var language: AppLanguage = .systemDefault   // 신규 설치 = 시스템 로케일
@@ -559,15 +621,60 @@ struct CompanionState: Codable, Sendable {
             claimedTodayTokensByProvider = nil
         }
         lastDate           = c.lenient(String.self, forKey: .lastDate, default: "")
-        // active 손상(빈 pathIDs 등) → 알로 폴백하되 도감·인벤토리는 보존.
-        active             = c.lenientOptional(MonState.self, forKey: .active)
-        // 도감은 항목별 격리 — 손상 항목 하나가 도감 전체를 날리지 않게.
+        // 도감(포획 로그)은 항목별 격리 — 손상 항목 하나가 로그 전체를 날리지 않게. party/dexUnlocked
+        // 마이그레이션이 이 값을 참조하므로 그보다 먼저 디코딩한다.
         dex                = c.lenient([Lossy<DexEntry>].self, forKey: .dex, default: []).compactMap(\.value)
+        if c.contains(.party) {
+            // 신규 포맷 — party/trainingSlotID/dexUnlocked 를 그대로 읽는다.
+            party          = c.lenient([Lossy<MonState>].self, forKey: .party, default: []).compactMap(\.value)
+            trainingSlotID = c.lenientOptional(String.self, forKey: .trainingSlotID)
+            dexUnlocked    = c.lenient([Int: DexUnlock].self, forKey: .dexUnlocked, default: [:])
+        } else {
+            // 구버전 세이브 — 단일 active 를 party 의 첫 원소로 승격하고, 기존 dex(졸업 기록) +
+            // active 의 도달분을 접어 dexUnlocked 를 1회성으로 재구성한다(최선 근사 — 실제 합류
+            // 시각은 없어 마이그레이션 시각/nil 로 대체).
+            let legacy = try decoder.container(keyedBy: LegacyCompanionKeys.self)
+            let legacyActive = legacy.lenientOptional(MonState.self, forKey: .active)
+            party = legacyActive.map { [$0] } ?? []
+            trainingSlotID = legacyActive?.id
+            dexUnlocked = CompanionState.migratedDexUnlocked(fromLegacyDex: dex, legacyActive: legacyActive)
+            if let a = legacyActive {
+                // 위장 중인 메타몽은 리빌 전까지 이로치를 숨긴다(판정 단일 소스, graduate()/activeDexEntry 와 동일 규칙).
+                let effectiveShiny = a.isShiny && !(a.dittoDisguise != nil && !a.dittoRevealed)
+                dex.append(DexEntry(baseID: a.baseID, finalID: a.currentID, chainOrder: a.pathIDs,
+                                     rarity: a.rarity, caughtAt: nil, isShiny: effectiveShiny,
+                                     nature: a.nature, names: nil, monID: a.id, source: .egg))
+            }
+        }
         collectedFinals    = c.lenient(Set<String>.self, forKey: .collectedFinals, default: [])
         language           = c.lenient(AppLanguage.self, forKey: .language, default: .systemDefault)
         inventory          = c.lenient([String: Int].self, forKey: .inventory, default: [:])
         candyGrantTier     = c.lenient([String: Int].self, forKey: .candyGrantTier, default: [:])
         candyFeatureSeeded = c.lenient(Bool.self, forKey: .candyFeatureSeeded, default: false)
+    }
+
+    /// 구버전 세이브 1회 마이그레이션 — 졸업 기록(dex) 각 항목의 chainOrder 전 종 + 구버전 active 의
+    /// 도달분(pathIDs[0...stageIndex])을 접어 종 단위 영구 언락 맵을 재구성한다. dexSpecies 가 기존에
+    /// 라이브로 하던 접기와 동일한 로직 — 마이그레이션 시점에 한 번 영속화한다는 점만 다르다.
+    static func migratedDexUnlocked(fromLegacyDex dex: [DexEntry], legacyActive: MonState?) -> [Int: DexUnlock] {
+        var out: [Int: DexUnlock] = [:]
+        for entry in dex {
+            for id in entry.chainOrder {
+                var u = out[id] ?? DexUnlock(baseID: entry.baseID, rarity: entry.rarity, names: nil, isShiny: false)
+                if let n = entry.names?[id] { u.names = n }
+                if entry.isShiny { u.isShiny = true }
+                out[id] = u
+            }
+        }
+        if let a = legacyActive {
+            let effectiveShiny = a.isShiny && !(a.dittoDisguise != nil && !a.dittoRevealed)
+            for id in a.pathIDs.prefix(a.stageIndex + 1) {
+                var u = out[id] ?? DexUnlock(baseID: a.baseID, rarity: a.rarity, names: nil, isShiny: false)
+                if effectiveShiny { u.isShiny = true }
+                out[id] = u
+            }
+        }
+        return out
     }
 }
 

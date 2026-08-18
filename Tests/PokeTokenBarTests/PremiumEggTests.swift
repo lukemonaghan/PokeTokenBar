@@ -175,14 +175,17 @@ final class PremiumEggTests: XCTestCase {
 
     func testBuyPremiumEggRecordsGuaranteeAndDebitsTierPrice() {
         let s = activeStore()
+        let benchedID = s.trainingMon?.id
+        let dexBefore = s.state.dex
         XCTAssertTrue(s.canBuyEgg(.rare))
         XCTAssertTrue(s.buyEgg(.rare))
         XCTAssertEqual(s.state.eggTier, .rare, "보증이 상태에 기록됨")
         XCTAssertEqual(s.eggGuarantee, .rare)
         XCTAssertEqual(s.state.spentTokens, FreshEgg.price(guaranteeing: .rare))
-        XCTAssertNil(s.state.active, "현재 포켓몬 폐기")
+        XCTAssertNil(s.trainingMon, "훈련 슬롯은 풀린다")
         XCTAssertEqual(s.state.eggUsage, 0, "새 알은 처음부터 인큐베이션")
-        XCTAssertTrue(s.state.dex.isEmpty, "폐기는 졸업이 아니다 — 도감 불변")
+        XCTAssertTrue(s.party.contains { $0.id == benchedID }, "폐기가 아니라 PC 로 돌아간다 — 개체는 남는다")
+        XCTAssertEqual(s.state.dex.map(\.id), dexBefore.map(\.id), "벤치는 삭제가 아니다 — 포획 로그 불변")
     }
 
     /// 알 상태에선 등급 알도 못 산다 — 기존 새 알과 게이트 통일.
@@ -203,7 +206,7 @@ final class PremiumEggTests: XCTestCase {
         XCTAssertTrue(s.canBuyEgg(.uncommon))
         XCTAssertFalse(s.canBuyEgg(.rare))
         XCTAssertFalse(s.buyEgg(.rare))
-        XCTAssertNotNil(s.state.active, "실패 시 활성 유지")
+        XCTAssertNotNil(s.trainingMon, "실패 시 활성 유지")
         XCTAssertEqual(s.state.spentTokens, 0)
     }
 
@@ -242,10 +245,10 @@ final class PremiumEggTests: XCTestCase {
         for seed in UInt64(1)...20 {
             let g = eggStore(tier: .rare, seed: seed, provider: TieredProvider())
             await g.hatchIfNeeded()
-            if let r = g.state.active?.rarity { guaranteedRarities.append(r) }
+            if let r = g.trainingMon?.rarity { guaranteedRarities.append(r) }
             let c = eggStore(tier: nil, seed: seed, provider: TieredProvider())
             await c.hatchIfNeeded()
-            if let r = c.state.active?.rarity { controlRarities.append(r) }
+            if let r = c.trainingMon?.rarity { controlRarities.append(r) }
         }
         XCTAssertEqual(guaranteedRarities.count, 20, "20회 모두 부화해야 필터가 실제로 검증된다")
         for r in guaranteedRarities {
@@ -266,7 +269,7 @@ final class PremiumEggTests: XCTestCase {
         for seed in UInt64(1)...20 {
             let s = eggStore(tier: .uncommon, seed: seed, provider: TieredProvider())
             await s.hatchIfNeeded()
-            guard let r = s.state.active?.rarity else { return XCTFail("부화 실패 seed \(seed)") }
+            guard let r = s.trainingMon?.rarity else { return XCTFail("부화 실패 seed \(seed)") }
             XCTAssertNotEqual(r, .common)
             if r == .uncommon { sawUncommon = true }
         }
@@ -280,7 +283,7 @@ final class PremiumEggTests: XCTestCase {
         for seed in UInt64(1)...60 {
             let s = eggStore(tier: .rare, seed: seed, provider: TieredProvider())
             await s.hatchIfNeeded()
-            if s.state.active?.rarity == .legendary { sawLegendary = true; break }
+            if s.trainingMon?.rarity == .legendary { sawLegendary = true; break }
         }
         XCTAssertTrue(sawLegendary, "희귀 알 풀에 전설이 남아 있어야 한다(전설 전용 상품만 금지)")
     }
@@ -292,7 +295,7 @@ final class PremiumEggTests: XCTestCase {
         for seed in UInt64(1)...10 {
             let s = eggStore(tier: .rare, seed: seed, provider: RestOnlyTieredProvider())
             await s.hatchIfNeeded()
-            guard let r = s.state.active?.rarity else { continue }   // 16회 소진(≈0.15%)은 알 유지가 정상
+            guard let r = s.trainingMon?.rarity else { continue }   // 16회 소진(≈0.15%)은 알 유지가 정상
             hatched += 1
             XCTAssertEqual(r, .rare, "REST 폴백이 보증을 무시하고 \(r) 를 뽑음")
         }
@@ -306,7 +309,7 @@ final class PremiumEggTests: XCTestCase {
         for seed in UInt64(1)...20 {
             let s = eggStore(tier: .uncommon, seed: seed, provider: RestOnlyTieredProvider())
             await s.hatchIfNeeded()
-            guard let r = s.state.active?.rarity else { continue }
+            guard let r = s.trainingMon?.rarity else { continue }
             XCTAssertNotEqual(r, .common, "REST 폴백이 고급 알에 common 을 내줌")
             if r == .uncommon { sawUncommon = true }
         }
@@ -319,7 +322,7 @@ final class PremiumEggTests: XCTestCase {
         for seed in UInt64(1)...20 {
             let s = eggStore(tier: nil, seed: seed, provider: RestOnlyTieredProvider())
             await s.hatchIfNeeded()
-            if s.state.active?.rarity == .common { sawCommon = true; break }
+            if s.trainingMon?.rarity == .common { sawCommon = true; break }
         }
         XCTAssertTrue(sawCommon)
     }
@@ -331,7 +334,7 @@ final class PremiumEggTests: XCTestCase {
     func testHatchDiscardsSpeciesBelowGuaranteeWhenIndexIsStale() async {
         let s = eggStore(tier: .rare, seed: 1, provider: LyingIndexProvider())
         await s.hatchIfNeeded()
-        XCTAssertNil(s.state.active, "하한 미만이면 부화시키지 않는다")
+        XCTAssertNil(s.trainingMon, "하한 미만이면 부화시키지 않는다")
         XCTAssertNil(s.state.pendingHatchID, "다음 틱에 다시 뽑도록 pre-roll 폐기")
         XCTAssertEqual(s.state.eggTier, .rare, "보증은 그대로 유지")
         XCTAssertEqual(s.state.eggUsage, PokemonBalance.eggHatchThreshold, "인큐베이션 진행도 유지")
@@ -341,7 +344,7 @@ final class PremiumEggTests: XCTestCase {
     func testSameSpeciesHatchesNormallyWithoutGuarantee() async {
         let s = eggStore(tier: nil, seed: 1, provider: LyingIndexProvider())
         await s.hatchIfNeeded()
-        XCTAssertEqual(s.state.active?.rarity, .common)
+        XCTAssertEqual(s.trainingMon?.rarity, .common)
     }
 
     // MARK: 보증 소비 — 다음 알로 새면 영구 프리미엄이 된다
@@ -349,7 +352,7 @@ final class PremiumEggTests: XCTestCase {
     func testHatchConsumesGuarantee() async {
         let s = eggStore(tier: .rare, seed: 1, provider: TieredProvider())
         await s.hatchIfNeeded()
-        XCTAssertNotNil(s.state.active)
+        XCTAssertNotNil(s.trainingMon)
         XCTAssertNil(s.state.eggTier, "부화로 보증 소비")
         XCTAssertNil(s.eggGuarantee)
     }
@@ -359,10 +362,10 @@ final class PremiumEggTests: XCTestCase {
     func testGuaranteeDoesNotSurviveIntoTheNextEgg() async {
         let s = eggStore(tier: .rare, seed: 1, provider: TieredProvider())
         await s.hatchIfNeeded()
-        guard let active = s.state.active else { return XCTFail("부화 실패") }
+        guard let active = s.trainingMon else { return XCTFail("부화 실패") }
         XCTAssertNil(s.state.eggTier, "부화 시점에 보증 소비")
         s.applyUsage(PokemonBalance.graduationTotal(active.rarity) * 2)   // 단일 형태 → 졸업
-        XCTAssertNil(s.state.active, "졸업")
+        XCTAssertNil(s.trainingMon, "졸업")
         XCTAssertEqual(s.state.dex.count, 1)
         XCTAssertNil(s.state.eggTier, "졸업으로 받는 알에는 보증이 없다")
         XCTAssertNil(s.eggGuarantee)
@@ -388,8 +391,10 @@ final class PremiumEggTests: XCTestCase {
         var s = CompanionState()
         s.eggTier = .rare
         s.pendingHatchID = 3
-        s.active = MonState(baseID: 1, pathIDs: [1], stageIndex: 0, usedAtStage: 0,
-                            rarity: .common, totalForms: 1)
+        let mon = MonState(baseID: 1, pathIDs: [1], stageIndex: 0, usedAtStage: 0,
+                           rarity: .common, totalForms: 1)
+        s.party = [mon]
+        s.trainingSlotID = mon.id
         let cleaned = SaveTransfer.sanitized(s)
         XCTAssertNil(cleaned.eggTier)
         XCTAssertNil(cleaned.pendingHatchID, "보증으로 뽑아둔 종이 남으면 다음 무료 알이 그 결과를 받는다")
@@ -411,7 +416,7 @@ final class PremiumEggTests: XCTestCase {
         let s = eggStore(tier: .legendary, seed: 1, provider: TieredProvider())
         XCTAssertNil(s.state.eggTier, "만족 불가능한 보증은 읽는 순간 떨어져 나간다")
         await s.hatchIfNeeded()
-        XCTAssertNotNil(s.state.active, "알이 정상적으로 부화해야 한다(벽돌 상태 아님)")
+        XCTAssertNotNil(s.trainingMon, "알이 정상적으로 부화해야 한다(벽돌 상태 아님)")
     }
 
     /// 판매 목록에 없는 티어는 살 수 없다 — 가격만 계산되면(전설 8B) 호출부 하나가 실수했을 때 토큰이
@@ -422,7 +427,7 @@ final class PremiumEggTests: XCTestCase {
         XCTAssertFalse(s.canBuyEgg(.legendary))
         XCTAssertFalse(s.buyEgg(.legendary))
         XCTAssertEqual(s.state.spentTokens, 0, "차감 없음")
-        XCTAssertNotNil(s.state.active, "폐기 없음")
+        XCTAssertNotNil(s.trainingMon, "폐기 없음")
         XCTAssertFalse(s.canBuyEgg(.common), "기본 알은 tier nil 로만 판다")
     }
 

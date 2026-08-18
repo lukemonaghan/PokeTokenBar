@@ -101,13 +101,13 @@ final class DittoRevealTests: XCTestCase {
     /// update → loadCurrentLine → applyUsage(0) → (임계 초과 시) revealDitto 비동기 체인을 드레인.
     private func drainReveal(_ s: CompanionStore) async {
         s.update(todayTokensByProvider: ["test": 0], todayDate: "d1", monthTotal: 0, burnTier: .idle, limitWarning: false, hasUsageData: true)
-        for _ in 0..<200 where !(s.state.active?.dittoRevealed ?? false) { await Task.yield() }
+        for _ in 0..<200 where !(s.trainingMon?.dittoRevealed ?? false) { await Task.yield() }
     }
 
     /// 위장 중엔 이로치가 표시상 숨겨진다(내부 isShiny 는 유지 — 리빌 때 공개).
     func testShinyHiddenDuringDisguise() {
         let s = seedDisguise(shiny: true)
-        XCTAssertTrue(s.state.active?.isShiny ?? false, "내부적으론 이로치")
+        XCTAssertTrue(s.trainingMon?.isShiny ?? false, "내부적으론 이로치")
         XCTAssertFalse(s.currentIsShiny, "위장 중엔 표시상 숨김")
     }
 
@@ -115,21 +115,21 @@ final class DittoRevealTests: XCTestCase {
     func testRevealAtFirstEvolution() async {
         let s = seedDisguise()
         s.applyUsage(300_000_000)   // 라인 미로딩 중 적립(첫 진화 125M 초과) — 진화/리빌 보류
-        XCTAssertEqual(s.state.active?.usedAtStage, 300_000_000)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 300_000_000)
         XCTAssertEqual(s.currentSpeciesID, 1, "아직 위장체 표시")
-        XCTAssertFalse(s.state.active?.dittoRevealed ?? true)
+        XCTAssertFalse(s.trainingMon?.dittoRevealed ?? true)
         await drainReveal(s)
-        XCTAssertTrue(s.state.active?.dittoRevealed ?? false, "첫 진화 임계에서 리빌돼야 한다")
-        XCTAssertEqual(s.state.active?.baseID, PokemonOdds.dittoSpeciesID, "메타몽으로 전환")
+        XCTAssertTrue(s.trainingMon?.dittoRevealed ?? false, "첫 진화 임계에서 리빌돼야 한다")
+        XCTAssertEqual(s.trainingMon?.baseID, PokemonOdds.dittoSpeciesID, "메타몽으로 전환")
         XCTAssertEqual(s.currentSpeciesID, PokemonOdds.dittoSpeciesID)
         XCTAssertNotEqual(s.currentSpeciesID, 2, "위장체는 진화하지 않는다")
-        XCTAssertEqual(s.state.active?.rarity, .rare, "메타몽 rare")
-        XCTAssertEqual(s.state.active?.totalForms, 1, "메타몽 단일형태")
-        XCTAssertEqual(s.state.active?.stageIndex, 0)
-        XCTAssertEqual(s.state.active?.pathIDs, [132])
-        XCTAssertEqual(s.state.active?.plannedPathIDs, [132])
-        XCTAssertEqual(s.state.active?.usedAtStage, 300_000_000 - 125_000_000, "첫 진화 초과분 이월")
-        XCTAssertNotNil(s.state.active?.dittoDisguise, "위장 마커 보존")
+        XCTAssertEqual(s.trainingMon?.rarity, .rare, "메타몽 rare")
+        XCTAssertEqual(s.trainingMon?.totalForms, 1, "메타몽 단일형태")
+        XCTAssertEqual(s.trainingMon?.stageIndex, 0)
+        XCTAssertEqual(s.trainingMon?.pathIDs, [132])
+        XCTAssertEqual(s.trainingMon?.plannedPathIDs, [132])
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 300_000_000 - 125_000_000, "첫 진화 초과분 이월")
+        XCTAssertNotNil(s.trainingMon?.dittoDisguise, "위장 마커 보존")
         XCTAssertEqual(s.celebration, .dittoReveal(shiny: false), "리빌 연출 발화")
     }
 
@@ -150,7 +150,7 @@ final class DittoRevealTests: XCTestCase {
 
         await drainReveal(s)
 
-        let revealed = try XCTUnwrap(s.state.active)
+        let revealed = try XCTUnwrap(s.trainingMon)
         XCTAssertEqual(revealed.baseID, PokemonOdds.dittoSpeciesID)
         XCTAssertEqual(revealed.pathIDs, [PokemonOdds.dittoSpeciesID])
         XCTAssertEqual(revealed.plannedPathIDs, [PokemonOdds.dittoSpeciesID])
@@ -190,17 +190,17 @@ final class DittoRevealTests: XCTestCase {
 
         XCTAssertTrue(s.buyFreshEgg())
         await s.hatch(baseID: 1)
-        XCTAssertEqual(s.state.active?.baseID, 1)
-        XCTAssertFalse(s.state.active?.dittoRevealed ?? true)
-        XCTAssertNotNil(s.state.active?.dittoDisguise)
-        XCTAssertEqual(s.state.active?.usedAtStage, 0)
+        XCTAssertEqual(s.trainingMon?.baseID, 1)
+        XCTAssertFalse(s.trainingMon?.dittoRevealed ?? true)
+        XCTAssertNotNil(s.trainingMon?.dittoDisguise)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 0)
 
         await provider.resume()
         for _ in 0..<200 { await Task.yield() }
-        XCTAssertEqual(s.state.active?.baseID, 1)
-        XCTAssertFalse(s.state.active?.dittoRevealed ?? true)
-        XCTAssertNotNil(s.state.active?.dittoDisguise)
-        XCTAssertEqual(s.state.active?.usedAtStage, 0)
+        XCTAssertEqual(s.trainingMon?.baseID, 1)
+        XCTAssertFalse(s.trainingMon?.dittoRevealed ?? true)
+        XCTAssertNotNil(s.trainingMon?.dittoDisguise)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 0)
         XCTAssertNotEqual(s.currentSpeciesID, PokemonOdds.dittoSpeciesID)
     }
 
@@ -210,7 +210,7 @@ final class DittoRevealTests: XCTestCase {
         s.applyUsage(300_000_000)
         XCTAssertFalse(s.currentIsShiny, "리빌 전 숨김")
         await drainReveal(s)
-        XCTAssertTrue(s.state.active?.dittoRevealed ?? false)
+        XCTAssertTrue(s.trainingMon?.dittoRevealed ?? false)
         XCTAssertTrue(s.currentIsShiny, "리빌 후 이로치 공개")
         XCTAssertEqual(s.celebration, .dittoReveal(shiny: true), "이로치 리빌 연출")
     }
@@ -220,7 +220,7 @@ final class DittoRevealTests: XCTestCase {
         let s = seedDisguise()
         s.applyUsage(100_000_000)   // 첫 진화 125M 미달
         await drainReveal(s)        // (드레인해도 리빌 조건 미충족)
-        XCTAssertFalse(s.state.active?.dittoRevealed ?? true, "임계 미달 → 위장 유지")
+        XCTAssertFalse(s.trainingMon?.dittoRevealed ?? true, "임계 미달 → 위장 유지")
         XCTAssertEqual(s.currentSpeciesID, 1, "여전히 위장체")
     }
 
@@ -233,8 +233,8 @@ final class DittoRevealTests: XCTestCase {
             + "\"lastDate\":\"d1\",\"active\":\(active),\"dex\":[],\"collectedFinals\":[]}"
         try? json.data(using: .utf8)!.write(to: url)
         let s = CompanionStore(provider: DittoTestProvider(), clock: { dNow }, fileURL: url, rng: SeededRNG(seed: 7))
-        XCTAssertNil(s.state.active?.dittoDisguise)
-        XCTAssertFalse(s.state.active?.dittoRevealed ?? true)
+        XCTAssertNil(s.trainingMon?.dittoDisguise)
+        XCTAssertFalse(s.trainingMon?.dittoRevealed ?? true)
         XCTAssertTrue(s.currentIsShiny, "위장 아님 → 이로치 그대로 표시")
     }
 

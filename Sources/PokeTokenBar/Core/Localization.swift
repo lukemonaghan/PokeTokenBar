@@ -373,6 +373,10 @@ struct L {
     func dexTotal(_ n: Int) -> String { t("총 \(n)마리", "\(n) total", "全\(n)匹", "\(n) en total") }
     /// 포획 로그 = 개체 단위 기록(같은 라인 중복이 정상). 도감 = 종 단위 집계.
     var catchLogTitle: String { t("포획 로그", "Catch log", "捕獲ログ", "Registro de capturas") }
+    /// PC = 소유한 모든 포켓몬(파티). 실제 게임의 PC 박스에서 따온 이름.
+    var pcTitle: String { t("PC", "PC", "PC", "PC") }
+    func pcLevel(_ n: Int) -> String { t("Lv.\(n)", "Lv.\(n)", "Lv.\(n)", "Nv.\(n)") }
+    var pcTapToTrain: String { t("탭하면 훈련 대상으로 전환", "Tap to make this your training Pokémon", "タップで育成対象に切り替え", "Toca para hacerlo tu Pokémon en entrenamiento") }
     /// 도감 총계는 개체가 아니라 종 수 — 로그의 dexTotal("총 N마리")과 단위가 다르다.
     func dexSpeciesTotal(_ n: Int) -> String { t("\(n)종", "\(n) species", "\(n)種", "\(n) especies") }
     func dexPageLabel(_ page: Int, _ total: Int) -> String {
@@ -591,13 +595,11 @@ struct L {
         return t("\(r) 이상 확정", "\(r) or better", "\(r) 以上確定", "\(r) o superior garantizado")
     }
     func eggConfirm(_ monName: String, _ eggName: String) -> String {
-        t("\(monName)을(를) 놓아주고 \(eggName)(으)로 바꿀까요?",
-          "Send off \(monName) for the \(eggName)?",
-          "\(monName) を手放して \(eggName) にしますか？",
-          "¿Soltar a \(monName) y cambiarlo por \(eggName)?")
+        t("\(monName)을(를) PC로 보내고 \(eggName)(으)로 바꿀까요? (\(monName)은 잃지 않아요)",
+          "Move \(monName) to your PC and start the \(eggName)? (you keep \(monName))",
+          "\(monName) をPCに送って \(eggName) にしますか？（\(monName) は失いません）",
+          "¿Mover a \(monName) a tu PC y empezar \(eggName)? (conservas a \(monName))")
     }
-    var freshEggShinyWarning: String { t("⚠️ 이로치 포켓몬이에요! 정말 놓아줄까요?", "⚠️ This one is shiny! Really send it off?", "⚠️ 色違いです！本当に手放しますか？", "⚠️ ¡Este es variocolor! ¿Seguro que quieres soltarlo?") }
-    var freshEggDiscardShiny: String { t("이로치 놓아주기", "Send shiny off", "手放す", "Soltar variocolor") }
 
     // MARK: 사탕 획득 알림 ("왜 받는지" = 토큰 한도를 다 채운 수고에 대한 보상)
     func notifCandyTitle(item: String, count: Int) -> String {

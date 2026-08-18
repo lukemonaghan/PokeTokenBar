@@ -97,7 +97,7 @@ final class ShinyCharmTests: XCTestCase {
     func testHatchWorksWithCharmOwned() async {
         let s = store(used: 5_000_000_000, charm: true, seed: 7)
         await s.hatch(baseID: 1)
-        XCTAssertNotNil(s.state.active, "부적 보유 상태에서도 정상 부화")
+        XCTAssertNotNil(s.trainingMon, "부적 보유 상태에서도 정상 부화")
         XCTAssertEqual(s.currentSpeciesID, 1)
     }
 }

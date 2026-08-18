@@ -228,8 +228,8 @@ final class RareCandyStoreTests: XCTestCase {
         let before = s.state.usedSinceInstall
         let result = s.useRareCandy()
         XCTAssertEqual(result, .progressed)
-        XCTAssertEqual(s.state.active?.usedAtStage, RareCandy.xp)
-        XCTAssertEqual(s.state.active?.stageIndex, 0)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, RareCandy.xp)
+        XCTAssertEqual(s.trainingMon?.stageIndex, 0)
         XCTAssertEqual(s.rareCandyCount, 0, "재고 1 소모")
         XCTAssertEqual(s.state.usedSinceInstall, before, "사탕 XP 는 실사용 통계에 안 잡힘")
     }
@@ -243,7 +243,7 @@ final class RareCandyStoreTests: XCTestCase {
         let result = s.useRareCandy()
         XCTAssertEqual(result, .evolved)
         XCTAssertEqual(s.currentSpeciesID, 2)
-        XCTAssertEqual(s.state.active?.stageIndex, 1)
+        XCTAssertEqual(s.trainingMon?.stageIndex, 1)
     }
 
     /// [불변식] 사탕 1개 = 최대 1단계 — 임계 직전(124M)에서 써도 2단계 연쇄 안 됨.
@@ -253,7 +253,7 @@ final class RareCandyStoreTests: XCTestCase {
         s.applyUsage(124_000_000)   // stage0 임계 직전
         giveCandies(s, 1)
         _ = s.useRareCandy()        // +100M → 224M: stage0(125M) 1회만, stage1(250M) 미달
-        XCTAssertEqual(s.state.active?.stageIndex, 1, "최대 1단계")
+        XCTAssertEqual(s.trainingMon?.stageIndex, 1, "최대 1단계")
     }
 
     /// 최종단계에서 잔여가 사탕XP 이하면 졸업 → 도감 + 새 알.
@@ -264,7 +264,7 @@ final class RareCandyStoreTests: XCTestCase {
         giveCandies(s, 1)
         let result = s.useRareCandy()
         XCTAssertEqual(result, .graduated)
-        XCTAssertNil(s.state.active)
+        XCTAssertNil(s.trainingMon)
         XCTAssertEqual(s.dexEntries.count, 1)
     }
 
@@ -314,7 +314,7 @@ final class RareCandyStoreTests: XCTestCase {
         let json = #"{"installBaselineSet":true,"lastDate":"d1","active":{"baseID":1,"pathIDs":[1],"stageIndex":0,"usedAtStage":0,"rarity":"common","totalForms":3},"inventory":{"rareCandy":1},"candyFeatureSeeded":true,"dex":[],"collectedFinals":[]}"#
         try? json.data(using: .utf8)!.write(to: url)
         let s = CompanionStore(provider: RCLineThrows(), clock: { rcNow }, fileURL: url, rng: SeededRNG(seed: 1))
-        XCTAssertNotNil(s.state.active, "활성 포켓몬 로드")
+        XCTAssertNotNil(s.trainingMon, "활성 포켓몬 로드")
         XCTAssertNil(s.currentLine, "라인 미로딩(throws)")
         XCTAssertEqual(s.rareCandyCount, 1)
         XCTAssertFalse(s.canUseRareCandy)
@@ -349,11 +349,11 @@ final class RareCandyStoreTests: XCTestCase {
         s.applyUsage(100_000_000)                      // stage0(125M) 도달 전
         giveCandies(s, 3)
         XCTAssertEqual(s.useRareCandy(), .evolved)     // 200M ≥125M → stage1, 이월 75M
-        XCTAssertEqual(s.state.active?.stageIndex, 1)
+        XCTAssertEqual(s.trainingMon?.stageIndex, 1)
         XCTAssertEqual(s.useRareCandy(), .progressed)  // 175M <250M → 부분성장
-        XCTAssertEqual(s.state.active?.stageIndex, 1)
+        XCTAssertEqual(s.trainingMon?.stageIndex, 1)
         XCTAssertEqual(s.useRareCandy(), .evolved)     // 275M ≥250M → stage2
-        XCTAssertEqual(s.state.active?.stageIndex, 2)
+        XCTAssertEqual(s.trainingMon?.stageIndex, 2)
         XCTAssertEqual(s.rareCandyCount, 0)
     }
 

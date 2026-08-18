@@ -484,6 +484,9 @@ struct CompanionHeader: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         Text(store.displayName).font(.callout.weight(.semibold))
+                        if let level = store.currentLevel {
+                            Text(store.l.pcLevel(level)).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                        }
                         if store.currentIsShiny { Text("✨").font(.system(size: 11)) }
                         if let r = store.rarity {
                             Text(store.l.rarityLabel(r).uppercased()).font(.system(size: 8, weight: .bold))
@@ -689,20 +692,25 @@ struct DexSummaryHeader: View {
     }
 }
 
-/// 컬렉션 탭 — 도감과 포획 로그를 하위 세그먼트로 전환한다.
+/// 컬렉션 탭 세그먼트 — 도감(종 단위 영구 언락) / PC(소유한 모든 개체) / 포획 로그(합류 기록).
+private enum CollectionSegment: Hashable { case dex, pc, log }
+
+/// 컬렉션 탭 — 도감·PC·포획 로그를 하위 세그먼트로 전환한다.
 ///
-/// 두 화면은 같은 데이터를 다른 축으로 본다:
-///  - **도감**: 종 1개 = 1칸. 같은 라인을 여러 번 키워도 한 칸으로 접힌다(종 정보만).
-///  - **로그**: 개체 1마리 = 1행. 같은 라인이 여러 행으로 나오는 게 정상 — 성격·획득 시각처럼
-///    개체에 딸린 정보는 여기에만 있다.
-/// 상위 탭(PopoverTab)은 그대로 4개 — 세그먼트 폭(332/2)이 넉넉해 탭바를 늘릴 필요가 없다.
+/// 세 화면은 같은 데이터를 다른 축으로 본다:
+///  - **도감**: 종 1개 = 1칸, 영구 언락(개체를 나중에 잃어도 안 지워진다). 같은 라인을 여러 번
+///    키워도 한 칸으로 접힌다(종 정보만).
+///  - **PC**: 지금 소유한 개체 1마리 = 1칸. 훈련 중이 아닌 칸을 탭하면 그 개체로 훈련 대상을 바꾼다.
+///  - **로그**: 파티에 합류한 개체 1마리 = 1행(합류 시각순, 알/거래 표시). 같은 라인이 여러 행으로
+///    나오는 게 정상 — 성격·합류 시각처럼 개체에 딸린 정보는 여기에만 있다.
+/// 상위 탭(PopoverTab)은 그대로 4개 — 세그먼트 폭(332/3)이 넉넉해 탭바를 늘릴 필요가 없다.
 struct CollectionView: View {
     let store: CompanionStore
-    @State private var showingLog = false
+    @State private var segment: CollectionSegment = .dex
     /// 로그 전용 희귀도 필터. 도감은 개수 단위가 종이라 자기 필터를 따로 갖는다(DexGridView).
     @State private var selectedRarity: Rarity?
 
-    /// 도감·로그 공통 높이 — 상점·가방과 같은 520. 세그먼트를 전환할 때도, 탭을 넘나들 때도
+    /// 세 세그먼트 공통 높이 — 상점·가방과 같은 520. 세그먼트를 전환할 때도, 탭을 넘나들 때도
     /// 팝오버가 리사이즈되지 않는다.
     ///
     /// 예산: 520 − 세그먼트 24 − 헤더 39 − 하단 줄 18 − 간격 24 = 격자 415. 6행 spacing 4 면
@@ -717,16 +725,21 @@ struct CollectionView: View {
 
     var body: some View {
         if store.dexEntries.isEmpty {
-            emptyState   // 둘 다 비어 있으니 세그먼트를 그리지 않는다
+            emptyState   // 셋 다 비어 있으니 세그먼트를 그리지 않는다
         } else {
             VStack(alignment: .leading, spacing: 8) {
-                Picker("", selection: $showingLog) {
-                    Text(store.l.dexTitle).tag(false)
-                    Text(store.l.catchLogTitle).tag(true)
+                Picker("", selection: $segment) {
+                    Text(store.l.dexTitle).tag(CollectionSegment.dex)
+                    Text(store.l.pcTitle).tag(CollectionSegment.pc)
+                    Text(store.l.catchLogTitle).tag(CollectionSegment.log)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                if showingLog { catchLog } else { DexGridView(store: store) }
+                switch segment {
+                case .dex: DexGridView(store: store)
+                case .pc: PartyGridView(store: store)
+                case .log: catchLog
+                }
             }
             .frame(height: Self.contentHeight)
         }
@@ -772,6 +785,78 @@ struct CollectionView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
+    }
+}
+
+/// PC — 소유한 모든 개체. 훈련 중이 아닌 카드를 탭하면 그 개체로 훈련 대상을 전환한다(무료, 알과 무관).
+/// 종 단위 도감·시각순 로그와 달리 개체 목록이라 페이지 격자 대신 스크롤 목록으로 둔다 — 우측 예시처럼
+/// 파티 규모에 상한이 없다(PLAN 의 "PC 는 무제한" 결정).
+private struct PartyGridView: View {
+    let store: CompanionStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(store.l.pcTitle).font(.callout.weight(.semibold))
+                Text(store.l.dexTotal(store.party.count)).font(.caption2).foregroundStyle(.secondary)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(store.party) { mon in
+                        PartyMemberRow(store: store, mon: mon, isTraining: mon.id == store.trainingMon?.id)
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
+    }
+}
+
+/// PC 한 행 — 종 스프라이트 + 레벨/단계 + 성격/이로치. 훈련 중인 개체는 뱃지만 붙고 탭이 비활성화된다
+/// (이미 그 개체이므로 전환할 곳이 없다).
+private struct PartyMemberRow: View {
+    let store: CompanionStore
+    let mon: MonState
+    let isTraining: Bool
+
+    var body: some View {
+        Button {
+            store.setTrainingSlot(to: mon.id)
+        } label: {
+            HStack(spacing: 10) {
+                SpriteView(speciesID: mon.currentID, size: 44, shiny: mon.isShiny)
+                    .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(store.l.pcLevel(mon.level)).font(.system(size: 11, weight: .bold))
+                        if isTraining {
+                            Text(store.l.dexRaising.uppercased())
+                                .font(.system(size: 8, weight: .bold))
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Color.accentColor.opacity(0.14))
+                                .foregroundStyle(Color.accentColor)
+                                .clipShape(Capsule())
+                        }
+                        if mon.isShiny {
+                            Text("✨").font(.system(size: 10)).accessibilityLabel(store.l.dexShinyLabel)
+                        }
+                    }
+                    HStack(spacing: 6) {
+                        Text(store.l.rarityLabel(mon.rarity)).font(.system(size: 9)).foregroundStyle(.secondary)
+                        if let nature = mon.nature {
+                            Text(nature.name(store.language)).font(.system(size: 9)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .padding(8)
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .disabled(isTraining)
+        .help(isTraining ? "" : store.l.pcTapToTrain)
     }
 }
 
@@ -923,14 +1008,6 @@ private struct DexSpeciesCell: View {
                 SpriteView(speciesID: species.id, size: Self.thumb,
                            shiny: species.isShiny && isSelected)
                     .frame(width: Self.thumb, height: Self.thumb)
-                    // 표식은 스프라이트 아래가 아니라 위에 겹친다 — 별도 줄로 빼면 칸 높이가 넘친다.
-                    // 이 줄은 번호·이로치와 폭을 다투지 않아 세 언어 모두 8pt 그대로 들어간다
-                    // (가장 긴 en "RAISING" 이 캡슐 포함 45pt, 칸 안쪽 폭 74pt).
-                    // `fixedSize` 필수 — 오버레이는 붙은 뷰(스프라이트 44)의 폭을 제안받아서, 없으면
-                    // 칸이 아니라 스프라이트 폭에 갇혀 "RAISIN/G" 로 줄바꿈된다.
-                    .overlay(alignment: .bottom) {
-                        if species.isRaising { raisingBadge.fixedSize() }
-                    }
                 Text(species.name)
                     .font(.system(size: 9))
                     .lineLimit(1).minimumScaleFactor(0.8)
@@ -975,24 +1052,11 @@ private struct DexSpeciesCell: View {
             .background(.regularMaterial, in: Capsule())
     }
 
-    /// "키우는 중" — 아직 졸업 기록이 없어 사라질 수 있는 칸임을 알린다. 포획 로그의 같은 뱃지와
-    /// 글자·색을 맞춰 두 화면이 같은 말을 쓰게 한다. accent 틴트는 반투명이라 스프라이트가 비치므로
-    /// material 을 한 겹 깔아 대비를 확보한다(로그는 카드 배경 위라 필요 없었다).
-    private var raisingBadge: some View {
-        Text(store.l.dexRaising.uppercased())
-            .font(.system(size: 8, weight: .bold))
-            .padding(.horizontal, 5).padding(.vertical, 1)
-            .foregroundStyle(Color.accentColor)
-            .background(Color.accentColor.opacity(0.14), in: Capsule())
-            .background(.regularMaterial, in: Capsule())
-    }
-
     /// 툴팁과 접근성 라벨이 같은 문장을 쓴다 — 칸이 글자로 못 보여주는 희귀도를 담는다.
     /// ✨ 는 이모지라 스크린리더가 일관되게 읽지 못하므로 명사로 함께 넣는다.
     private var tooltip: String {
         var parts = ["#\(species.id) \(species.name)", store.l.rarityLabel(species.rarity)]
         if species.isShiny { parts.append(store.l.dexShinyLabel) }
-        if species.isRaising { parts.append(store.l.dexRaising) }
         return parts.joined(separator: " · ")
     }
 }
@@ -1017,7 +1081,7 @@ private struct DexEntryRow: View {
                     .padding(.horizontal, 5).padding(.vertical, 1)
                     .background(rarityColor(entry.rarity)).foregroundStyle(.white)
                     .clipShape(Capsule())
-                if store.isActiveDexEntry(entry) {
+                if store.isTrainingLogEntry(entry) {
                     Text(store.l.dexRaising.uppercased())
                         .font(.system(size: 8, weight: .bold))
                         .padding(.horizontal, 5).padding(.vertical, 1)

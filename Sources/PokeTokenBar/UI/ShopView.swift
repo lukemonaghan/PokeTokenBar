@@ -121,8 +121,9 @@ private struct ShopItemCard: View {
     }
 }
 
-/// 알 카드 — 구매 = 즉시 현재 포켓몬 폐기 후 새 알로. `tier` 는 보증 등급 하한(nil = 보증 없는 기본 알).
-/// 인라인 2단계 확인: 일반은 1회, 이로치면 한 번 더(사고 폐기 방지). 성공하면 Home 으로 전환해 새 알을 보여준다.
+/// 알 카드 — 구매 = 훈련 중인 개체를 PC 로 돌려보내고(폐기 아님) 새 알로. `tier` 는 보증 등급
+/// 하한(nil = 보증 없는 기본 알). 인라인 확인 1단계 — 더 이상 개체를 잃지 않으므로(PC 에 남는다)
+/// 이로치 추가 경고는 없다. 성공하면 Home 으로 전환해 새 알을 보여준다.
 ///
 /// 등급 알의 시각 구분은 **카드의 등급 배지**로만 한다 — 알 스프라이트는 한 장뿐이고, 메뉴바·플로팅 펫은
 /// 기존 알 그대로 둔다(새 에셋 없이 구분이 서는 최소 범위).
@@ -131,7 +132,7 @@ private struct EggCard: View {
     let nav: PopoverNavigation
     let tier: Rarity?
     @State private var stage: Stage = .idle
-    private enum Stage { case idle, confirm, shinyConfirm }
+    private enum Stage { case idle, confirm }
 
     private var price: Int { FreshEgg.price(guaranteeing: tier) }
 
@@ -187,21 +188,8 @@ private struct EggCard: View {
                 Text(l.eggConfirm(store.displayName, l.eggName(tier)))
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                 Spacer()
-                // 이로치면 한 번 더 경고, 아니면 즉시 실행.
-                Button(l.buy) {
-                    if store.currentIsShiny { stage = .shinyConfirm } else { commit() }
-                }
-                .buttonStyle(.borderedProminent).controlSize(.small)
-                Button(l.cancel) { stage = .idle }
-                    .buttonStyle(.borderless).controlSize(.small)
-            }
-        case .shinyConfirm:
-            HStack(spacing: 8) {
-                Text(l.freshEggShinyWarning)
-                    .font(.caption2.weight(.semibold)).foregroundStyle(.orange).lineLimit(2)
-                Spacer()
-                Button(l.freshEggDiscardShiny) { commit() }
-                    .buttonStyle(.borderedProminent).controlSize(.small).tint(.orange)
+                Button(l.buy) { commit() }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
                 Button(l.cancel) { stage = .idle }
                     .buttonStyle(.borderless).controlSize(.small)
             }

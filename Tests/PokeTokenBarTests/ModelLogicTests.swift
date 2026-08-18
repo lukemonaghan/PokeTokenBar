@@ -96,6 +96,58 @@ final class RarityBoundaryTests: XCTestCase {
     }
 }
 
+// MARK: PokemonBalance 레벨 표시(진화 타이밍과 무관한 화면 전용 값)
+
+final class PokemonBalanceLevelTests: XCTestCase {
+    func testLevelStartsAtOneOnHatch() {
+        for rarity in [Rarity.common, .uncommon, .rare, .legendary] {
+            XCTAssertEqual(PokemonBalance.level(rarity: rarity, totalForms: 3, stageIndex: 0, usedAtStage: 0), 1,
+                           "부화 직후(누적 XP 0)는 항상 Lv.1")
+        }
+    }
+
+    func testLevelReachesCapAtFullGraduation() {
+        for rarity in [Rarity.common, .uncommon, .rare, .legendary] {
+            let k = 3
+            // 마지막 형태(stageIndex = k-1)에서 그 형태의 임계까지 다 채우면 누적 XP == graduationTotal.
+            let usedAtStage = PokemonBalance.phaseThreshold(rarity: rarity, totalForms: k, stageIndex: k - 1)
+            let level = PokemonBalance.level(rarity: rarity, totalForms: k, stageIndex: k - 1, usedAtStage: usedAtStage)
+            XCTAssertGreaterThanOrEqual(level, 99, "졸업 시점 근처는 Lv.99~100 이어야 한다")
+            XCTAssertLessThanOrEqual(level, 100)
+        }
+    }
+
+    func testLevelNeverExceedsCapEvenWithOverflow() {
+        // usedAtStage 가 임계를 한참 넘어도(이월 전 순간 등) 레벨은 100을 넘지 않는다.
+        let level = PokemonBalance.level(rarity: .common, totalForms: 1, stageIndex: 0, usedAtStage: Int.max / 2)
+        XCTAssertEqual(level, 100)
+    }
+
+    func testLevelIsMonotonicNonDecreasingAcrossStageAdvance() {
+        let k = 3
+        var previous = 1
+        for stageIndex in 0..<k {
+            let thr = PokemonBalance.phaseThreshold(rarity: .rare, totalForms: k, stageIndex: stageIndex)
+            for usedAtStage in stride(from: 0, through: thr, by: max(1, thr / 4)) {
+                let level = PokemonBalance.level(rarity: .rare, totalForms: k, stageIndex: stageIndex, usedAtStage: usedAtStage)
+                XCTAssertGreaterThanOrEqual(level, previous, "레벨은 사용량이 늘수록 절대 줄면 안 된다")
+                previous = level
+            }
+        }
+    }
+
+    func testCumulativeXPAtStageStartEqualsSumOfPriorThresholds() {
+        let k = 4
+        var expected = 0
+        for stageIndex in 0..<k {
+            XCTAssertEqual(
+                PokemonBalance.cumulativeXP(rarity: .uncommon, totalForms: k, stageIndex: stageIndex, usedAtStage: 0),
+                expected, "그 단계 시작 시점의 누적 XP = 이전 단계들의 임계 합")
+            expected += PokemonBalance.phaseThreshold(rarity: .uncommon, totalForms: k, stageIndex: stageIndex)
+        }
+    }
+}
+
 // MARK: OAuth expiresAt 단위 휴리스틱 (초 vs 밀리초)
 
 final class OAuthExpiresAtTests: XCTestCase {

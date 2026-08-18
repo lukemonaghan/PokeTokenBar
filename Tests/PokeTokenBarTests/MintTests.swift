@@ -34,11 +34,11 @@ final class MintTests: XCTestCase {
 
     func testUseMintChangesNatureToDifferent() {
         let s = store(nature: "adamant", mint: 1)
-        XCTAssertEqual(s.state.active?.nature, .adamant)
+        XCTAssertEqual(s.trainingMon?.nature, .adamant)
         let new = s.useMint()
         XCTAssertNotNil(new)
         XCTAssertNotEqual(new, .adamant, "현재와 다른 성격으로 바뀌어야 함")
-        XCTAssertEqual(s.state.active?.nature, new)
+        XCTAssertEqual(s.trainingMon?.nature, new)
         XCTAssertEqual(s.itemCount(.mint), 0, "재고 1 소모")
     }
 
@@ -46,7 +46,7 @@ final class MintTests: XCTestCase {
     func testMintNeverRepeatsCurrentAcrossUses() {
         let s = store(nature: "adamant", mint: 6)
         for _ in 0..<6 {
-            let before = s.state.active?.nature
+            let before = s.trainingMon?.nature
             let new = s.useMint()
             XCTAssertNotNil(new)
             XCTAssertNotEqual(new, before, "매 사용은 직전 성격과 달라야 함")
@@ -56,21 +56,21 @@ final class MintTests: XCTestCase {
     /// 성격 nil(구버전 개체) → 유효한 성격이 설정된다.
     func testUseMintFromNilNatureSetsValid() {
         let s = store(nature: nil, mint: 1)
-        XCTAssertNil(s.state.active?.nature)
+        XCTAssertNil(s.trainingMon?.nature)
         let new = s.useMint()
         XCTAssertNotNil(new)
-        XCTAssertEqual(s.state.active?.nature, new)
+        XCTAssertEqual(s.trainingMon?.nature, new)
     }
 
     /// 성장·종·shiny·usedAtStage·통계 전부 불변(순수 코스메틱).
     func testUseMintDoesNotAffectGrowthOrIdentity() {
         let s = store(nature: "adamant", mint: 1, used: 1_000_000_000, usedAtStage: 50_000_000, shiny: true)
-        let beforeStage = s.state.active?.stageIndex
+        let beforeStage = s.trainingMon?.stageIndex
         let beforeUsed = s.state.usedSinceInstall
         let beforeSpecies = s.currentSpeciesID
         _ = s.useMint()
-        XCTAssertEqual(s.state.active?.usedAtStage, 50_000_000, "진화 진행 불변")
-        XCTAssertEqual(s.state.active?.stageIndex, beforeStage)
+        XCTAssertEqual(s.trainingMon?.usedAtStage, 50_000_000, "진화 진행 불변")
+        XCTAssertEqual(s.trainingMon?.stageIndex, beforeStage)
         XCTAssertEqual(s.currentSpeciesID, beforeSpecies)
         XCTAssertTrue(s.currentIsShiny, "shiny 불변")
         XCTAssertEqual(s.state.usedSinceInstall, beforeUsed, "실사용 통계 불변")
@@ -121,7 +121,7 @@ final class MintTests: XCTestCase {
         XCTAssertNotNil(new)
 
         let s2 = CompanionStore(provider: MintNoProvider(), clock: { self.now }, fileURL: url, rng: SeededRNG(seed: 3))
-        XCTAssertEqual(s2.state.active?.nature, new, "바뀐 성격 영속")
+        XCTAssertEqual(s2.trainingMon?.nature, new, "바뀐 성격 영속")
         XCTAssertEqual(s2.itemCount(.mint), 1, "재고 감소 영속")
     }
 

@@ -155,32 +155,39 @@ enum SaveTransfer {
         s.inventory = s.inventory.reduce(into: [:]) { result, entry in
             result[entry.key] = clampToken(entry.value)
         }
-        // 알 보증은 "지금 품고 있는 알"에만 붙는 값이라 활성 포켓몬과 공존할 수 없다. 손편집·구버전
+        // 알 보증은 "지금 품고 있는 알"에만 붙는 값이라 훈련 중인 개체와 공존할 수 없다. 손편집·구버전
         // 조합으로 둘 다 들어오면 그 보증이 다음 알로 새어 영구 프리미엄이 되므로 여기서 떨군다.
         // 그 보증으로 미리 뽑아둔 종(pendingHatchID)도 함께 버린다 — 보증만 지우면 졸업 후 받는 **무료**
         // 알이 그 pre-roll 로 부화해, 아무도 사지 않은 프리미엄 결과가 나온다.
-        if s.active != nil { s.eggTier = nil; s.pendingHatchID = nil }
+        if s.trainingSlotID != nil { s.eggTier = nil; s.pendingHatchID = nil }
         // 만족시킬 수 없는 보증은 알을 영구히 못 깨게 만든다 — 전설은 capture_rate 로 표현할 수 없어
         // (captureRateCeiling == nil) 두 롤 경로 모두 후보를 0개로 만들고, 부화가 없으니 보증도 소비되지
         // 않으며, 새 알 구매는 `hasActive` 게이트에 막혀 빠져나갈 수단이 없다. 디코드는 *성공*하므로
         // load() 의 .corrupt 복구도 안 걸려 파일을 손으로 지우기 전엔 앱을 못 쓴다.
         // 관대 디코딩은 모르는 rawValue 만 걸러낼 뿐 **아는데 만족 불가능한 값**은 그대로 통과시킨다.
         if s.eggTier?.captureRateCeiling == nil { s.eggTier = nil }
-        if var active = s.active {
-            active.usedAtStage = clampToken(active.usedAtStage)
+        // PC 전원을 훑는다 — 예전엔 개체가 하나(active)라 한 번만 클램프하면 됐지만, 지금은 party 배열
+        // 전체가 대상이다. 여기서 한 명이라도 빠뜨리면 그 개체의 다음 진화 판정이 오버플로 트랩으로 죽는다.
+        s.party = s.party.map { mon in
+            var m = mon
+            m.usedAtStage = clampToken(m.usedAtStage)
             // totalForms 는 `kk * (kk + 1)` 형태로 쓰여(PokemonBalance.phaseThreshold) 큰 값이 그 자체로 트랩이다.
-            active.totalForms = min(max(1, active.totalForms), 12)
-            active.stageIndex = min(max(0, active.stageIndex), max(0, active.pathIDs.count - 1))
-            s.active = active
+            m.totalForms = min(max(1, m.totalForms), 12)
+            m.stageIndex = min(max(0, m.stageIndex), max(0, m.pathIDs.count - 1))
+            return m
         }
+        // trainingSlotID 는 이제 party 를 가리키는 포인터다 — 손편집·마이그레이션 버그로 아무도 가리키지
+        // 않게 되면 trainingMon 이 영영 nil 이 되어 조용히 멈춘 것처럼 보인다(진단 불가). 여기서 정리한다.
+        if let tid = s.trainingSlotID, !s.party.contains(where: { $0.id == tid }) { s.trainingSlotID = nil }
         return s
     }
 
     /// 다른 기기에서 온 상태를 **이 기기 기준으로 재정렬**한다.
     ///
     /// `CompanionState` 의 필드는 이전 관점에서 세 부류다.
-    ///  - **진행**: 어느 기기에서든 참(`usedSinceInstall`·`dex`·`inventory`·`active`·`eggUsage`·`eggTier`…)
-    ///    → 그대로. 알 보증(`eggTier`)은 산 물건이지 이 기기의 장부가 아니라 기기를 옮겨도 따라간다.
+    ///  - **진행**: 어느 기기에서든 참(`usedSinceInstall`·`dex`·`inventory`·`party`·`trainingSlotID`·
+    ///    `dexUnlocked`·`eggUsage`·`eggTier`…) → 그대로. 알 보증(`eggTier`)은 산 물건이지 이 기기의
+    ///    장부가 아니라 기기를 옮겨도 따라간다.
     ///  - **로컬 장부**: *그 기기가* 어디까지 적립했나(`claimedTodayTokensByProvider`·`lastDate`·`installBaselineSet`)
     ///    → 새 기기 기준으로 다시 잡는다. 그대로 들여오면 옛 기기의 오늘 총량이 문턱이 되어
     ///    `CompanionStore.update` 의 프로바이더별 증분 게이트가 이전 당일 내내 거짓이 되고,

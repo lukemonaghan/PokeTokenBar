@@ -56,7 +56,7 @@ final class StorePerformanceTests: XCTestCase {
                          burnTier: .normal, limitWarning: false, hasUsageData: true)
             }
         }
-        XCTAssertNotNil(s.state.active)   // 진화 없이 동일 단계 유지
+        XCTAssertNotNil(s.trainingMon)   // 진화 없이 동일 단계 유지
     }
 
     /// 큰 도감을 파일 로드로 주입하고 정렬 비용/정확성을 함께 본다.
@@ -102,7 +102,7 @@ final class StoreTerminationTests: XCTestCase {
                                clock: { pNow }, fileURL: tmpURL(), rng: SeededRNG(seed: 1))
         await s.hatch(baseID: 1)
         s.applyUsage(Int(PokemonBalance.graduationTotal(.common)) * 10)   // 졸업 총량의 10배
-        XCTAssertNil(s.state.active)            // 졸업 완료
+        XCTAssertNil(s.trainingMon)            // 졸업 완료
         XCTAssertEqual(s.dexEntries.count, 1)   // 정확히 1회
         XCTAssertEqual(s.dexEntries[0].chainOrder, [1, 2, 3])
         XCTAssertEqual(s.state.eggUsage, 0)     // 새 알 인큐베이션 리셋
@@ -116,7 +116,7 @@ final class StoreTerminationTests: XCTestCase {
             await s.hatch(baseID: 1)
             s.applyUsage(Int(PokemonBalance.graduationTotal(.common)) * 10)
             XCTAssertEqual(s.dexEntries.count, n)
-            XCTAssertNil(s.state.active)
+            XCTAssertNil(s.trainingMon)
         }
     }
 }

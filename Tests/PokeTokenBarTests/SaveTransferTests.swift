@@ -323,8 +323,10 @@ final class SaveTransferTests: XCTestCase {
         await entered.wait()   // 부화가 라인 fetch(네트워크) 대기 지점에 도달
 
         var imported = oldMacState(today: "2026-08-03")
-        imported.active = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
+        let importedMon = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
                                    stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        imported.party = [importedMon]
+        imported.trainingSlotID = importedMon.id
         let data = try SaveTransfer.encode(state: imported, appVersion: "2.5.0",
                                            deviceName: "Old Mac", now: transferNow)
         try s.applySave(try SaveTransfer.decode(data), todayTokensByProvider: ["test": 1],
@@ -333,7 +335,7 @@ final class SaveTransferTests: XCTestCase {
         await release.fire()
         await hatching.value
 
-        XCTAssertEqual(s.state.active?.baseID, 403, "뒤늦게 끝난 부화가 불러온 개체를 덮어쓰면 안 된다")
+        XCTAssertEqual(s.trainingMon?.baseID, 403, "뒤늦게 끝난 부화가 불러온 개체를 덮어쓰면 안 된다")
         XCTAssertEqual(s.state.dex.count, imported.dex.count, "도감도 부화 경로에 밀려나면 안 된다")
     }
 
@@ -356,14 +358,16 @@ final class SaveTransferTests: XCTestCase {
 
         let s = CompanionStore(provider: GatedIndexProvider(entered: entered, release: release, result: evo),
                                clock: { transferNow }, fileURL: url)
-        XCTAssertNil(s.state.active, "전제: 알 상태에서 시작")
+        XCTAssertNil(s.trainingMon, "전제: 알 상태에서 시작")
 
         let hatching = Task { await s.hatchIfNeeded() }
         await entered.wait()   // 종 롤이 인덱스 대기 지점에 도달
 
         var imported = oldMacState(today: "2026-08-03")
-        imported.active = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
+        let importedMon = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
                                    stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        imported.party = [importedMon]
+        imported.trainingSlotID = importedMon.id
         let data = try SaveTransfer.encode(state: imported, appVersion: "2.5.0",
                                            deviceName: "Old Mac", now: transferNow)
         try s.applySave(try SaveTransfer.decode(data), todayTokensByProvider: ["test": 1],
@@ -372,7 +376,7 @@ final class SaveTransferTests: XCTestCase {
         await release.fire()
         await hatching.value
 
-        XCTAssertEqual(s.state.active?.baseID, 403, "종 롤 대기 중 들어온 불러오기를 부화가 덮어쓰면 안 된다")
+        XCTAssertEqual(s.trainingMon?.baseID, 403, "종 롤 대기 중 들어온 불러오기를 부화가 덮어쓰면 안 된다")
         XCTAssertEqual(s.state.dex.count, imported.dex.count)
     }
 
@@ -394,8 +398,10 @@ final class SaveTransferTests: XCTestCase {
         await entered.wait()
 
         var imported = oldMacState(today: "2026-08-03")
-        imported.active = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
+        let importedMon = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
                                    stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        imported.party = [importedMon]
+        imported.trainingSlotID = importedMon.id
         let data = try SaveTransfer.encode(state: imported, appVersion: "2.5.0",
                                            deviceName: "Old Mac", now: transferNow)
         try s.applySave(try SaveTransfer.decode(data), todayTokensByProvider: ["test": 1],
@@ -421,8 +427,10 @@ final class SaveTransferTests: XCTestCase {
         let url = tempURL("noegg")
         let s = store(at: url)
         var imported = oldMacState(today: today)
-        imported.active = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
+        let importedMon = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
                                    stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        imported.party = [importedMon]
+        imported.trainingSlotID = importedMon.id
         let data = try SaveTransfer.encode(state: imported, appVersion: "2.5.0",
                                            deviceName: "Old Mac", now: transferNow)
         try s.applySave(try SaveTransfer.decode(data), todayTokensByProvider: ["test": 0], todayDate: today, hasUsageData: false)
@@ -430,7 +438,7 @@ final class SaveTransferTests: XCTestCase {
 
         s.update(todayTokensByProvider: ["test": 0], todayDate: today, monthTotal: 0,
                  burnTier: .idle, limitWarning: false, hasUsageData: false)
-        XCTAssertNotNil(s.state.active, "개체는 그대로 있어야 한다")
+        XCTAssertNotNil(s.trainingMon, "개체는 그대로 있어야 한다")
         XCTAssertEqual(s.displayState, .idle, "개체가 있는데 알로 표시하면 안 된다")
 
         // 알 상태에서 같은 경로를 타면 여전히 알이어야 한다(반대 방향 고정).
@@ -452,9 +460,11 @@ final class SaveTransferTests: XCTestCase {
         evil.spentTokens = Int.min
         evil.eggUsage = Int.max
         evil.claimedTodayTokensByProvider = ["test": -42]
-        evil.active = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1],
+        let evilMon = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1],
                                stageIndex: Int.max, usedAtStage: Int.max, rarity: .common,
                                totalForms: Int.max)
+        evil.party = [evilMon]
+        evil.trainingSlotID = evilMon.id
 
         let data = try SaveTransfer.encode(state: evil, appVersion: "2.5.0",
                                            deviceName: "Corrupt", now: transferNow)
@@ -465,9 +475,9 @@ final class SaveTransferTests: XCTestCase {
         XCTAssertEqual(s.spentTokens, 0, "음수는 0 으로")
         XCTAssertEqual(s.eggUsage, SaveTransfer.maxTokenValue)
         XCTAssertEqual(s.claimedTodayTokensByProvider?["test"], 0)
-        XCTAssertEqual(s.active?.usedAtStage, SaveTransfer.maxTokenValue)
-        XCTAssertEqual(s.active?.totalForms, 12)
-        XCTAssertEqual(s.active?.stageIndex, 0, "pathIDs 범위를 넘지 않아야 한다")
+        XCTAssertEqual(s.party.first?.usedAtStage, SaveTransfer.maxTokenValue)
+        XCTAssertEqual(s.party.first?.totalForms, 12)
+        XCTAssertEqual(s.party.first?.stageIndex, 0, "pathIDs 범위를 넘지 않아야 한다")
 
         // 정규화된 값으로 실제 산술 경로를 태워 트랩이 안 나는지 확인한다.
         let url = tempURL("clamped")
@@ -503,6 +513,33 @@ final class SaveTransferTests: XCTestCase {
         XCTAssertLessThanOrEqual(s.state.usedSinceInstall, SaveTransfer.maxTokenValue + 1_000)
     }
 
+    /// [PC 리팩터] party 는 배열이라 한 원소만 클램프하면 나머지가 새 오버플로 트랩으로 남는다 —
+    /// 전 원소를 훑는지 2명 이상으로 확인한다. trainingSlotID 가 아무 party 원소도 가리키지 않으면
+    /// (손편집·마이그레이션 버그) trainingMon 이 영원히 nil 이 되어 조용히 멈춘 것처럼 보이므로 같이 정리한다.
+    func testSanitizedSweepsEveryPartyMemberAndDropsDanglingTrainingSlot() {
+        var s = CompanionState()
+        let poisoned1 = MonState(baseID: 1, pathIDs: [1], plannedPathIDs: [1],
+                                 stageIndex: Int.max, usedAtStage: Int.max, rarity: .common, totalForms: Int.max)
+        let poisoned2 = MonState(baseID: 2, pathIDs: [2], plannedPathIDs: [2],
+                                 stageIndex: Int.min, usedAtStage: Int.min, rarity: .rare, totalForms: Int.min)
+        s.party = [poisoned1, poisoned2]
+        s.trainingSlotID = "no-such-id"
+
+        let cleaned = SaveTransfer.sanitized(s)
+
+        XCTAssertEqual(cleaned.party.count, 2, "정규화가 원소를 지우면 안 된다")
+        // poisoned1 은 Int.max(상한 클램프), poisoned2 는 Int.min(하한 클램프) — 방향이 다르므로
+        // 값이 아니라 두 원소 모두 유효 범위 안에 있는지로 검증한다(둘 다 훑는지가 이 테스트의 핵심).
+        for mon in cleaned.party {
+            XCTAssertGreaterThanOrEqual(mon.totalForms, 1, "두 번째 원소도 첫 번째와 같이 클램프돼야 한다")
+            XCTAssertLessThanOrEqual(mon.totalForms, 12)
+            XCTAssertGreaterThanOrEqual(mon.usedAtStage, 0)
+            XCTAssertLessThanOrEqual(mon.usedAtStage, SaveTransfer.maxTokenValue)
+            XCTAssertEqual(mon.stageIndex, 0, "pathIDs 범위를 넘지 않아야 한다")
+        }
+        XCTAssertNil(cleaned.trainingSlotID, "아무도 안 가리키는 훈련 슬롯은 정리돼야 한다")
+    }
+
     // MARK: 필드 부류 (딥리뷰 M-c·M-e·M-g)
 
     /// [딥리뷰 M-g] 이전 시 필드 분류가 산문 규약뿐이라, 새 필드가 추가되면 아무 판단 없이 "진행"으로
@@ -510,7 +547,8 @@ final class SaveTransferTests: XCTestCase {
     func testEveryCompanionStateFieldIsClassifiedForTransfer() {
         // eggTier(알 등급 보증) = 진행 — 산 물건이지 이 기기의 장부가 아니라 기기를 옮겨도 따라간다.
         let progress: Set<String> = ["usedSinceInstall", "spentTokens", "eggUsage", "eggTier",
-                                     "pendingHatchID", "active", "dex", "collectedFinals", "inventory"]
+                                     "pendingHatchID", "party", "trainingSlotID", "dexUnlocked",
+                                     "dex", "collectedFinals", "inventory"]
         let deviceLedger: Set<String> = ["installBaselineSet", "claimedTodayTokensByProvider", "lastDate"]
         let accountLedger: Set<String> = ["candyGrantTier", "candyFeatureSeeded"]
         let devicePreference: Set<String> = ["language"]
@@ -648,8 +686,10 @@ final class SaveTransferTests: XCTestCase {
     func testApplySaveSetsDisplayStateFromWhetherACompanionCameIn() throws {
         let today = "2026-08-03"
         var withMon = oldMacState(today: today)
-        withMon.active = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
+        let withMonMon = MonState(baseID: 403, pathIDs: [403], plannedPathIDs: [403],
                                   stageIndex: 0, usedAtStage: 0, rarity: .common, totalForms: 1)
+        withMon.party = [withMonMon]
+        withMon.trainingSlotID = withMonMon.id
         let a = store(at: tempURL("dispA"))
         try a.applySave(try SaveTransfer.decode(
             try SaveTransfer.encode(state: withMon, appVersion: "2.5.0", deviceName: "A", now: transferNow)),

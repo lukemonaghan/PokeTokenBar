@@ -29,23 +29,27 @@ final class FreshEggTests: XCTestCase {
 
     func testPriceIsOneBillion() { XCTAssertEqual(FreshEgg.price, 1_000_000_000) }
 
-    /// [핵심] 리롤 = 폐기: active 사라지고 새 알(eggUsage 0). **도감·확률(collectedFinals) 불변** = "뽑은 적 없던 것처럼".
+    /// [핵심] 리롤 = 벤치(PC 로 이동), 폐기가 아니다: 훈련 슬롯만 풀리고 새 알(eggUsage 0) 시작.
+    /// 개체 자체는 party 에 그대로 남고, 그 개체의 포획 로그 행도 지워지지 않는다.
+    /// **도감·확률(collectedFinals) 불변** = "뽑은 적 없던 것처럼"(개체 자체가 사라지지 않는 것과는 별개 축).
     func testBuyFreshEggDiscardsWithoutDexOrProbabilityImpact() {
         let s = store(used: 5_000_000_000, spent: 0)
+        let benchedID = s.trainingMon?.id
         let persistedDexBefore = s.state.dex
         let collectedBefore = s.state.collectedFinals
-        XCTAssertEqual(s.dexEntries.count, persistedDexBefore.count + 1,
-                       "현재 포켓몬은 졸업 전에도 도감 화면에 표시")
+        XCTAssertEqual(s.dexEntries.count, persistedDexBefore.count,
+                       "포획 로그는 합류 시점에 이미 진짜 행 — 화면용 합성 없음")
         XCTAssertTrue(s.hasActive)
         XCTAssertTrue(s.buyFreshEgg())
-        XCTAssertNil(s.state.active, "현재 포켓몬 폐기")
+        XCTAssertNil(s.trainingMon, "훈련 슬롯은 풀린다")
         XCTAssertTrue(s.isEgg)
         XCTAssertEqual(s.state.eggUsage, 0, "새 알은 처음부터 인큐베이션")
         XCTAssertNil(s.state.pendingHatchID)
+        XCTAssertTrue(s.party.contains { $0.id == benchedID }, "폐기가 아니라 PC 로 돌아간다 — 개체는 남는다")
         XCTAssertEqual(s.state.dex.map(\.id), persistedDexBefore.map(\.id),
-                       "영구 도감 불변 — 졸업이 아니라 폐기")
+                       "영구 포획 로그 불변 — 벤치는 삭제가 아니다")
         XCTAssertEqual(s.dexEntries.count, persistedDexBefore.count,
-                       "폐기한 현재 포켓몬의 화면용 엔트리는 제거")
+                       "벤치한 개체의 포획 로그 행도 그대로 남는다")
         XCTAssertEqual(s.state.collectedFinals, collectedBefore, "확률 가중(collectedFinals) 불변")
         XCTAssertEqual(s.state.spentTokens, FreshEgg.price, "지갑에서 1B 차감")
         XCTAssertEqual(s.availableTokens, 5_000_000_000 - FreshEgg.price)
@@ -73,7 +77,7 @@ final class FreshEggTests: XCTestCase {
         let s = store(used: 500_000_000)   // 1B 미만
         XCTAssertFalse(s.canBuyFreshEgg)
         XCTAssertFalse(s.buyFreshEgg())
-        XCTAssertNotNil(s.state.active, "활성 유지")
+        XCTAssertNotNil(s.trainingMon, "활성 유지")
         XCTAssertEqual(s.state.spentTokens, 0)
     }
 
@@ -82,7 +86,7 @@ final class FreshEggTests: XCTestCase {
         let s = store(shiny: true)
         XCTAssertTrue(s.currentIsShiny)
         XCTAssertTrue(s.buyFreshEgg())
-        XCTAssertNil(s.state.active)
+        XCTAssertNil(s.trainingMon)
         XCTAssertFalse(s.currentIsShiny)
     }
 }
