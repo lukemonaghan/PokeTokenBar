@@ -269,6 +269,17 @@ struct L {
           "Se detuvo la importación porque no se pudo hacer una copia de seguridad del estado actual — tu progreso no se ha tocado. Comprueba el espacio libre en disco.")
     }
 
+    // MARK: 온라인 (설정 → Online) — 트레이딩/배틀용 자체 호스팅 서버 연결(옵트인)
+    var onlineSectionTitle: String { t("온라인", "Online", "オンライン", "En línea") }
+    var onlineServerURLLabel: String { t("서버 URL", "Server URL", "サーバーURL", "URL del servidor") }
+    var onlineServerURLPlaceholder: String { t("example.com", "example.com", "example.com", "example.com") }
+    var onlineDisplayNameLabel: String { t("표시 이름", "Display name", "表示名", "Nombre visible") }
+    var onlineTestConnectionButton: String { t("연결 테스트", "Test Connection", "接続テスト", "Probar conexión") }
+    var onlineConnectionSuccess: String { t("연결됨", "Connected", "接続済み", "Conectado") }
+    func onlineConnectionFailure(_ message: String) -> String {
+        t("연결 실패: \(message)", "Couldn't connect: \(message)", "接続に失敗しました: \(message)", "No se pudo conectar: \(message)")
+    }
+
     // MARK: 문제점 알리기 (설정 → 메일 리포트)
     var reportProblem: String { t("문제점 알리기", "Report a problem", "問題を報告", "Reportar un problema") }
     var showLogFile: String { t("로그 파일 보기", "Show log file", "ログファイルを表示", "Mostrar archivo de registro") }

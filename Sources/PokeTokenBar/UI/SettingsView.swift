@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(UsageStore.self) private var store
     @Environment(CompanionStore.self) private var companion
     @Environment(UpdateChecker.self) private var updater
+    @Environment(OnlineStore.self) private var online
     /// 팝오버 내부 화면 전환 방식 — sheet/dismiss 를 쓰지 않는다 (PopoverView 의 NOTE 참조)
     var onClose: () -> Void
     @State private var launchAtLogin = LoginItem.isEnabled
@@ -44,6 +45,7 @@ struct SettingsView: View {
                     floatingPetGroup(store)
                     notificationsGroup(store)
                     updateGroup(store)
+                    onlineGroup
                     transferGroup(store)
                     advancedGroup(store)
                     aboutSupportGroup
@@ -298,6 +300,58 @@ struct SettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// 온라인 — 트레이딩/배틀용 자체 호스팅 서버 연결(옵트인). 서버 미설정이면 앱은 오늘처럼 완전히
+    /// 오프라인으로 동작한다 — 이 섹션은 그 상태를 바꾸지 않고 URL을 기억하고 연결을 확인할 뿐이다.
+    @ViewBuilder
+    private var onlineGroup: some View {
+        @Bindable var online = online
+        settingsSection(l.onlineSectionTitle) {
+            groupRow {
+                Text(l.onlineServerURLLabel)
+                Spacer()
+                TextField(l.onlineServerURLPlaceholder, text: $online.serverURL)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+            }
+            Divider()
+            groupRow {
+                Text(l.onlineDisplayNameLabel)
+                Spacer()
+                TextField("", text: $online.displayName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+            }
+            Divider()
+            groupRow {
+                onlinePingStatus
+                Spacer()
+                Button {
+                    Task { await online.ping() }
+                } label: {
+                    if online.pingResult == .checking {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(l.onlineTestConnectionButton)
+                    }
+                }
+                .disabled(online.pingResult == .checking || online.serverURL.isEmpty)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var onlinePingStatus: some View {
+        switch online.pingResult {
+        case .idle, .checking:
+            EmptyView()
+        case .success:
+            Text(l.onlineConnectionSuccess).font(.caption).foregroundStyle(.green)
+        case .failure(let message):
+            Text(l.onlineConnectionFailure(message))
+                .font(.caption).foregroundStyle(.orange).lineLimit(2)
         }
     }
 
