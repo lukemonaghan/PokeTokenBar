@@ -377,6 +377,50 @@ struct L {
     var pcTitle: String { t("PC", "PC", "PC", "PC") }
     func pcLevel(_ n: Int) -> String { t("Lv.\(n)", "Lv.\(n)", "Lv.\(n)", "Nv.\(n)") }
     var pcTapToTrain: String { t("탭하면 훈련 대상으로 전환", "Tap to make this your training Pokémon", "タップで育成対象に切り替え", "Toca para hacerlo tu Pokémon en entrenamiento") }
+
+    // MARK: 거래
+    var tradeTitle: String { t("거래", "Trade", "交換", "Intercambio") }
+    var tradePickOffer: String { t("보낼 포켓몬을 골라주세요", "Pick a Pokémon to offer", "送るポケモンを選んでください", "Elige un Pokémon para ofrecer") }
+    var tradeNoBenchedMons: String { t("PC에 훈련 중이 아닌 포켓몬이 없어요.\n먼저 훈련 대상을 바꾸거나 새 알을 부화시켜 보세요.", "You don't have any benched Pokémon to offer.\nSwitch your training focus or hatch a new egg first.", "PCに育成中でないポケモンがいません。\nまず育成対象を切り替えるか、新しい卵を孵化させてください。", "No tienes ningún Pokémon en el banco para ofrecer.\nCambia tu Pokémon en entrenamiento o eclosiona un huevo primero.") }
+    var tradeCreateButton: String { t("이 포켓몬으로 거래 시작", "Start trade with this Pokémon", "このポケモンで交換を開始", "Iniciar intercambio con este Pokémon") }
+    var tradeWaitingForJoin: String { t("친구가 링크를 열기를 기다리는 중…", "Waiting for a friend to open the link…", "友達がリンクを開くのを待っています…", "Esperando a que un amigo abra el enlace…") }
+    var tradeShareLink: String { t("링크 공유", "Share link", "リンクを共有", "Compartir enlace") }
+    var tradeCopyLink: String { t("링크 복사", "Copy link", "リンクをコピー", "Copiar enlace") }
+    var tradeCopied: String { t("복사됨", "Copied", "コピーしました", "Copiado") }
+    var tradeWaitingForCounterpart: String { t("상대가 포켓몬을 고르는 중…", "Waiting for the other trainer to pick…", "相手がポケモンを選んでいます…", "Esperando a que el otro entrenador elija…") }
+    func tradeReviewOffer(_ name: String) -> String {
+        t("\(name)님이 이 포켓몬을 제안했어요", "\(name) is offering this Pokémon", "\(name) さんがこのポケモンを提案しました", "\(name) te ofrece este Pokémon")
+    }
+    var tradeConfirmButton: String { t("거래 확정", "Confirm trade", "交換を確定", "Confirmar intercambio") }
+    var tradeCancelButton: String { t("취소", "Cancel", "キャンセル", "Cancelar") }
+    func tradeCompleted(_ received: String, from: String) -> String {
+        t("\(from)님에게서 \(received)을(를) 받았어요!", "You received \(received) from \(from)!", "\(from) さんから \(received) を受け取りました！", "¡Recibiste a \(received) de \(from)!")
+    }
+    var tradeDoneButton: String { t("완료", "Done", "完了", "Listo") }
+    var tradeFailedTitle: String { t("거래에 실패했어요", "Trade failed", "交換に失敗しました", "El intercambio falló") }
+    var tradeAuthErrorMessage: String {
+        t("서버에 연결할 수 없어요. 설정에서 서버 주소가 정확한지, 테스트가 성공했는지 확인해 주세요.",
+          "Couldn't reach the server. Make sure the server URL is correct and tested in Settings.",
+          "サーバーに接続できませんでした。設定でサーバーURLが正しいか、テストが成功しているか確認してください。",
+          "No se pudo conectar con el servidor. Comprueba que la URL del servidor sea correcta y esté probada en Ajustes.") }
+    var tradeExpiredTitle: String { t("이 거래 링크는 만료됐어요", "This trade link has expired", "この交換リンクは期限切れです", "Este enlace de intercambio ha caducado") }
+    var tradeTryAgainButton: String { t("다시 시도", "Try again", "もう一度試す", "Intentar de nuevo") }
+    func tradeJoinPrompt(_ server: String) -> String {
+        t("\(server)에서 온 거래 초대예요. 참가할까요?", "You've been invited to a trade on \(server). Join?", "\(server) からの交換の招待です。参加しますか？", "Te han invitado a un intercambio en \(server). ¿Quieres unirte?")
+    }
+    var tradeJoinButton: String { t("참가", "Join", "参加", "Unirse") }
+    func tradeDifferentServerConfirm(_ server: String) -> String {
+        t("지금은 다른 서버에 연결돼 있어요. \(server)(으)로 바꾸고 거래에 참가할까요?",
+          "You're currently connected to a different server. Switch to \(server) and join this trade?",
+          "現在別のサーバーに接続されています。\(server) に切り替えて交換に参加しますか？",
+          "Actualmente estás conectado a otro servidor. ¿Cambiar a \(server) y unirte a este intercambio?")
+    }
+    var tradeEntryPointHelp: String { t("포켓몬 거래", "Trade a Pokémon", "ポケモン交換", "Intercambiar un Pokémon") }
+
+    // MARK: Evolution lock
+    var evolutionLockedHelp: String { t("진화 잠김 — 탭하면 해제(경험치는 계속 쌓여요)", "Evolution locked — tap to unlock (still earns XP)", "進化ロック中 — タップで解除（経験値は引き続き貯まります）", "Evolución bloqueada — toca para desbloquear (sigue ganando XP)") }
+    var evolutionUnlockedHelp: String { t("탭하면 이 포켓몬의 진화를 막아요", "Tap to lock this Pokémon's evolution", "タップでこのポケモンの進化をロックします", "Toca para bloquear la evolución de este Pokémon") }
+    var evolutionLockedBadge: String { t("잠김", "Locked", "ロック中", "Bloqueado") }
     /// 도감 총계는 개체가 아니라 종 수 — 로그의 dexTotal("총 N마리")과 단위가 다르다.
     func dexSpeciesTotal(_ n: Int) -> String { t("\(n)종", "\(n) species", "\(n)種", "\(n) especies") }
     func dexPageLabel(_ page: Int, _ total: Int) -> String {

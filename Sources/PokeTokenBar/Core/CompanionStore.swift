@@ -144,29 +144,33 @@ final class CompanionStore {
     /// 분기 후보는 부화 시 계획됐더라도 실제 진화 전까지 하나의 미지 항목으로 숨긴다.
     var lineNodes: [EvoLineItem] {
         guard let a = trainingMon, let line = currentLine else { return [] }
-        var out = Self.realizedLineItems(pathIDs: a.pathIDs, stageIndex: a.stageIndex)
-        if let current = line.tree.node(withID: a.currentID) {
-            var node = current
-            var guaranteedPrefix: [EvoNode] = []
-            while node.children.count == 1, let child = node.children.first {
-                guaranteedPrefix.append(child)
-                node = child
-            }
-
-            if node.children.count > 1 {
-                out += guaranteedPrefix.map { EvoLineItem(.species($0.speciesID), .future) }
-                out.append(EvoLineItem(.mystery, .future))
-            } else {
-                out += guaranteedPrefix.map { EvoLineItem(.species($0.speciesID), .future) }
-            }
-        }
-        return out
+        return Self.lineItems(pathIDs: a.pathIDs, stageIndex: a.stageIndex, currentID: a.currentID, line: line)
     }
 
     static func realizedLineItems(pathIDs: [Int], stageIndex: Int) -> [EvoLineItem] {
         pathIDs.enumerated().map { i, id in
             EvoLineItem(.species(id), i == stageIndex ? .current : .done)
         }
+    }
+
+    /// realizedLineItems + 다음 미확정 단계(분기가 있으면 .mystery) — lineNodes(훈련 중 전용)와
+    /// PC 상세 화면(임의 개체) 이 같은 라인 계산을 공유한다.
+    static func lineItems(pathIDs: [Int], stageIndex: Int, currentID: Int, line: EvoLine) -> [EvoLineItem] {
+        var out = realizedLineItems(pathIDs: pathIDs, stageIndex: stageIndex)
+        guard let current = line.tree.node(withID: currentID) else { return out }
+        var node = current
+        var guaranteedPrefix: [EvoNode] = []
+        while node.children.count == 1, let child = node.children.first {
+            guaranteedPrefix.append(child)
+            node = child
+        }
+        if node.children.count > 1 {
+            out += guaranteedPrefix.map { EvoLineItem(.species($0.speciesID), .future) }
+            out.append(EvoLineItem(.mystery, .future))
+        } else {
+            out += guaranteedPrefix.map { EvoLineItem(.species($0.speciesID), .future) }
+        }
+        return out
     }
     /// 포획 로그 — 파티에 합류한 모든 개체(알/거래) 1행씩. 훈련 중인 개체도 합류 시점에 이미 실제
     /// 행을 갖고 있으므로(hatch/거래), 예전처럼 화면용 항목을 합성할 필요가 없다.
@@ -247,6 +251,12 @@ final class CompanionStore {
         return Dictionary(uniqueKeysWithValues: entry.chainOrder.map { id in
             (id, chainNames[id].flatMap { state.language.resolveName($0) } ?? "#\(id)")
         })
+    }
+
+    /// 임의 개체의 진화 라인 — PC 상세 화면용(훈련 중이 아니어도). provider 가 base 단위로
+    /// 캐시하므로 같은 라인을 여러 번 열어도 네트워크는 1회(currentLine 과 별개 — 훈련 대상을 바꾸지 않는다).
+    func line(baseID: Int) async -> EvoLine? {
+        try? await provider.line(baseSpeciesID: baseID)
     }
 
     // MARK: 갱신 (AppDelegate 가 UsageStore 값으로 호출)
@@ -389,6 +399,10 @@ final class CompanionStore {
             let a = state.party[idx]
             let thr = PokemonBalance.phaseThreshold(rarity: a.rarity, totalForms: a.totalForms, stageIndex: a.stageIndex)
             guard a.usedAtStage >= thr else { break }
+            // Evolution lock — usedAtStage already accumulated above (XP/level keep climbing), but
+            // crossing the threshold is never acted on while locked: no evolve, no graduate, no ditto
+            // reveal (that's a form change too). Stays here, over threshold, until unlocked.
+            if a.evolutionLocked { break }
             guard let node = line.tree.node(withID: a.currentID) else { break }
             // 위장체는 부화 때는 다형태지만, 에셋 정규화/마이그레이션 뒤 leaf가 될 수 있다.
             // 따라서 terminal 졸업보다 먼저 리빌해야 위장 종이 도감으로 잘못 졸업하지 않는다.
@@ -441,9 +455,12 @@ final class CompanionStore {
     }
 
     /// 종 도달 시(부화/진화) 영구 도감을 병합 갱신 — 이미 있으면 이로치만 OR, 없으면 새로 만든다.
-    private func unlockSpecies(_ id: Int, baseID: Int, rarity: Rarity, isShiny: Bool, line: EvoLine) {
+    /// When line is nil (e.g. a mon received via trade — this must finish synchronously, no line
+    /// lookup), unlock it without a name (nil) and let the existing backfillMissingDexNames() path
+    /// fill it in later (same pattern as legacy migration entries).
+    private func unlockSpecies(_ id: Int, baseID: Int, rarity: Rarity, isShiny: Bool, line: EvoLine?) {
         var u = state.dexUnlocked[id] ?? DexUnlock(baseID: baseID, rarity: rarity, names: nil, isShiny: false)
-        if let n = line.names[id] { u.names = n }
+        if let n = line?.names[id] { u.names = n }
         if isShiny { u.isShiny = true }
         state.dexUnlocked[id] = u
     }
@@ -702,6 +719,29 @@ final class CompanionStore {
         return true
     }
 
+    // MARK: PC — Evolution lock
+
+    /// Locks or unlocks a specific individual's evolution (any party member, not just the training
+    /// one). While locked, applyUsage keeps accumulating usedAtStage as normal — XP/level keep
+    /// climbing — it just never acts on crossing a threshold.
+    ///
+    /// Unlocking the *training* mon resolves immediately: applyUsage(0) re-enters the same
+    /// threshold-crossing loop every usage tick already uses, so if enough accumulated while locked
+    /// for two evolutions, both happen in one pass, same as a big rare-candy application. Unlocking
+    /// a *benched* mon just clears the flag — there's no loaded line to evolve it against
+    /// synchronously here, so it resolves the next time it's selected as training and a real usage
+    /// tick arrives.
+    @discardableResult
+    func setEvolutionLocked(_ locked: Bool, for monID: MonState.ID) -> Bool {
+        guard let idx = state.party.firstIndex(where: { $0.id == monID }) else { return false }
+        state.party[idx].evolutionLocked = locked
+        save()
+        if !locked, monID == state.trainingSlotID, currentLine != nil {
+            applyUsage(0)
+        }
+        return true
+    }
+
     // MARK: PC — 훈련 대상 전환
 
     /// 훈련 슬롯을 PC 안의 다른 개체로 전환 — 무료, 알과 무관(이미 소유한 개체 사이의 전환일 뿐).
@@ -717,7 +757,7 @@ final class CompanionStore {
         candyFeedbackAmount = 0; mintFeedbackNature = nil
         displayState = .idle
         save()
-        Task { await loadCurrentLine() }
+        Task { await loadCurrentLine(catchUp: false) }
         return true
     }
 
@@ -725,6 +765,56 @@ final class CompanionStore {
     var canBuyFreshEgg: Bool { canBuyEgg(nil) }
     @discardableResult
     func buyFreshEgg() -> Bool { buyEgg(nil) }
+
+    // MARK: PC — Trading
+
+    /// Party members that are benched (not training) — trade-offer candidates. The training mon is
+    /// excluded (decision: only benched Pokémon can be traded — this rules out ever needing to
+    /// release the training slot mid-trade).
+    var benchedParty: [MonState] { state.party.filter { $0.id != state.trainingSlotID } }
+
+    /// Removes a benched party member from the PC — call this after handing it off in a trade. Never
+    /// removes the training mon (defensive — safe even if a caller passes an id outside
+    /// benchedParty by mistake). An id that's already gone is a no-op (false) — safe to call again
+    /// if polling observes an already-completed trade one more time (idempotent). Doesn't touch
+    /// dex (the catch log) or dexUnlocked (the permanent Pokédex) — this model already assumes
+    /// those are permanent records that survive losing the individual later.
+    @discardableResult
+    func removeFromParty(_ monID: MonState.ID) -> Bool {
+        guard monID != state.trainingSlotID,
+              let idx = state.party.firstIndex(where: { $0.id == monID }) else { return false }
+        state.party.remove(at: idx)
+        save()
+        return true
+    }
+
+    /// Adds a received trade mon to the PC (benched — doesn't touch the training slot, so a
+    /// completed trade never quietly hijacks training already in progress). A duplicate id is a
+    /// no-op (false) — idempotent for the same reason as removeFromParty. acquiredVia is
+    /// overwritten with the displayName confirmed by this session — the incoming
+    /// MonState.acquiredVia is arbitrary JSON from the other side and isn't trusted (spoofing
+    /// guard). Applied only after the same trust-boundary clamp save import uses
+    /// (SaveTransfer.sanitizedMon) — a trade payload is just as much an outside-the-app value (the
+    /// other client, the server) as a save file.
+    @discardableResult
+    func addTradedMon(_ mon: MonState, from displayName: String?) -> Bool {
+        guard !state.party.contains(where: { $0.id == mon.id }) else { return false }
+        var incoming = SaveTransfer.sanitizedMon(mon)
+        incoming.acquiredVia = .trade(from: displayName)
+        incoming.acquiredAt = clock()
+        state.party.append(incoming)
+        for id in incoming.pathIDs.prefix(incoming.stageIndex + 1) {
+            let effectiveShiny = incoming.isShiny && !(incoming.dittoDisguise != nil && !incoming.dittoRevealed)
+            unlockSpecies(id, baseID: incoming.baseID, rarity: incoming.rarity, isShiny: effectiveShiny, line: nil)
+        }
+        state.dex.append(DexEntry(baseID: incoming.baseID, finalID: incoming.currentID, chainOrder: incoming.pathIDs,
+                                  rarity: incoming.rarity, caughtAt: clock(),
+                                  isShiny: incoming.isShiny && !(incoming.dittoDisguise != nil && !incoming.dittoRevealed),
+                                  nature: incoming.nature, names: nil, monID: incoming.id,
+                                  source: .trade(from: displayName)))
+        save()
+        return true
+    }
 
     /// 지급 판정(순수·엣지 트리거) — 한도 창이 100% 를 새로 넘어선 순간에만 지급.
     /// - 100% 미만 → 맵에서 제거(재무장). resets_at 등 휘발 필드는 key 에 없다(안정 식별자만).
@@ -996,7 +1086,16 @@ final class CompanionStore {
         applyUsage(0)   // 이월분으로 메타몽 졸업 재평가(rare 3B라 보통 즉시 졸업 아님)
     }
 
-    private func loadCurrentLine() async {
+    /// catchUp=true replays "usage accumulated while the line wasn't loaded yet may already be past
+    /// the threshold — evolve/graduate now" (app restart, a hatch/fetch race resolving). That's only
+    /// correct for a mon that's been the training mon continuously — its usedAtStage is real pending
+    /// progress. setTrainingSlot passes catchUp=false: switching to a *different*, already-owned
+    /// party member (freshly benched, or received via trade) can leave usedAtStage sitting at or
+    /// past its current stage's threshold as a legitimate resting value (a maxed-out bench mon, or
+    /// an already-fully-evolved trade gift) — replaying catch-up there would immediately re-fire
+    /// graduation and hand out a bonus egg the moment you merely looked at the mon. [Bug found by
+    /// selecting an already-completed Pokémon from the PC.]
+    private func loadCurrentLine(catchUp: Bool = true) async {
         guard let a = trainingMon, currentLine == nil, !isHatching else { return }
         let generation = activeGeneration
         isHatching = true
@@ -1014,7 +1113,7 @@ final class CompanionStore {
             mutateTraining { $0 = normalized }
             currentLine = line
             save()   // 마이그레이션 선택을 사용량 재평가 전에 영속화해 재시작마다 다시 롤리지 않는다.
-            applyUsage(0)   // 라인 미로딩 동안 적립된 사용량이 임계를 넘었으면 지금 진화 판정
+            if catchUp { applyUsage(0) }   // 라인 미로딩 동안 적립된 사용량이 임계를 넘었으면 지금 진화 판정
         }
     }
 

@@ -802,6 +802,54 @@ final class CompanionStoreTests: XCTestCase {
         XCTAssertEqual(s.justGraduated, "포3")
     }
 
+    func testEvolutionLockBlocksStageAdvanceButXPKeepsClimbing() async {
+        let s = store(linear3)
+        await s.hatch(baseID: 1)
+        let mon = s.trainingMon!
+        s.setEvolutionLocked(true, for: mon.id)
+        let levelBefore = s.trainingMon!.level
+
+        s.applyUsage(PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 0) + 50)
+
+        XCTAssertEqual(s.currentSpeciesID, 1, "locked — must not evolve past threshold")
+        XCTAssertGreaterThan(s.trainingMon!.level, levelBefore, "XP/level keep climbing while locked")
+    }
+
+    func testUnlockingTrainingMonResolvesMultiStageBacklogInOnePass() async {
+        let s = store(linear3)
+        await s.hatch(baseID: 1)
+        let mon = s.trainingMon!
+        s.setEvolutionLocked(true, for: mon.id)
+
+        // Enough usage to cross both remaining evolution thresholds (1→2 and 2→3), but not graduate.
+        let bothStages = PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 0)
+            + PokemonBalance.phaseThreshold(rarity: .common, totalForms: 3, stageIndex: 1)
+        s.applyUsage(bothStages)
+        XCTAssertEqual(s.currentSpeciesID, 1, "still locked at species 1 despite enough banked usage for 2 stages")
+
+        s.setEvolutionLocked(false, for: mon.id)
+
+        XCTAssertEqual(s.currentSpeciesID, 3, "unlocking resolves the full backlog in one pass, not one stage at a time")
+        XCTAssertTrue(s.isFinalStage)
+    }
+
+    func testUnlockingBenchedMonJustClearsFlagWithNoSideEffects() async {
+        let s = store(linear3)
+        await s.hatch(baseID: 1)
+        let trainingID = s.trainingMon!.id
+        let incoming = MonState(baseID: 20, pathIDs: [20], stageIndex: 0, usedAtStage: 0,
+                                 rarity: .common, totalForms: 1)
+        XCTAssertTrue(s.addTradedMon(incoming, from: "Friend"))
+
+        s.setEvolutionLocked(true, for: incoming.id)
+        XCTAssertTrue(s.state.party.first { $0.id == incoming.id }!.evolutionLocked)
+
+        s.setEvolutionLocked(false, for: incoming.id)
+
+        XCTAssertFalse(s.state.party.first { $0.id == incoming.id }!.evolutionLocked)
+        XCTAssertEqual(s.trainingMon?.id, trainingID, "unlocking a benched mon must not touch the training slot")
+    }
+
     func testNoEvolutionGraduatesAtSingleThreshold() async {
         let s = store(noEvo)
         await s.hatch(baseID: 20)

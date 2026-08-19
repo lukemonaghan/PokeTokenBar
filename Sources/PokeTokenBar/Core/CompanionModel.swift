@@ -393,7 +393,7 @@ enum AcquisitionSource: Codable, Sendable, Equatable {
 }
 
 /// 현재 키우는 포켓몬. PC(파티) 배열의 원소 — `id` 로 개체를 식별한다(진화해도 고정).
-struct MonState: Codable, Sendable, Identifiable {
+struct MonState: Codable, Sendable, Identifiable, Equatable {
     var id: String = UUID().uuidString
     var baseID: Int
     var pathIDs: [Int]      // 실제 진화 경로(분기 선택 반영)
@@ -409,6 +409,10 @@ struct MonState: Codable, Sendable, Identifiable {
     var dittoRevealed = false       // 위장 → 리빌(정체 공개) 전환 여부
     var acquiredAt: Date = Date()   // 파티 합류 시각(구버전 세이브는 마이그레이션 시각으로 근사)
     var acquiredVia: AcquisitionSource = .egg
+    /// User-set — while true, applyUsage still accumulates usedAtStage (XP/level keep climbing) but
+    /// never acts on crossing a threshold (no evolve, no graduate). Lets someone keep a form they
+    /// like without losing progress toward it.
+    var evolutionLocked = false
     // pathIDs 가 비면(손상된 상태 파일) baseID 로 폴백 — 렌더마다 읽히므로 out-of-bounds 크래시 방지.
     var currentID: Int { pathIDs.isEmpty ? baseID : pathIDs[min(stageIndex, pathIDs.count - 1)] }
     /// 표시 전용 레벨(Lv.1~100) — PokemonBalance.level 참고.
@@ -417,7 +421,7 @@ struct MonState: Codable, Sendable, Identifiable {
     init(id: String = UUID().uuidString, baseID: Int, pathIDs: [Int], plannedPathIDs: [Int]? = nil,
          stageIndex: Int, usedAtStage: Int, rarity: Rarity, totalForms: Int, isShiny: Bool = false,
          nature: PokemonNature? = nil, dittoDisguise: Int? = nil, dittoRevealed: Bool = false,
-         acquiredAt: Date = Date(), acquiredVia: AcquisitionSource = .egg) {
+         acquiredAt: Date = Date(), acquiredVia: AcquisitionSource = .egg, evolutionLocked: Bool = false) {
         self.id = id
         self.baseID = baseID
         self.pathIDs = pathIDs
@@ -436,6 +440,7 @@ struct MonState: Codable, Sendable, Identifiable {
         self.dittoRevealed = dittoRevealed
         self.acquiredAt = acquiredAt
         self.acquiredVia = acquiredVia
+        self.evolutionLocked = evolutionLocked
     }
 
     // 하위호환 디코딩: shiny/nature/id/acquiredAt/acquiredVia 는 구버전 저장에 없음 → 기본값.
@@ -464,6 +469,7 @@ struct MonState: Codable, Sendable, Identifiable {
         dittoRevealed = try c.decodeIfPresent(Bool.self, forKey: .dittoRevealed) ?? false
         acquiredAt = (try? c.decodeIfPresent(Date.self, forKey: .acquiredAt)) ?? Date()
         acquiredVia = (try? c.decodeIfPresent(AcquisitionSource.self, forKey: .acquiredVia)) ?? .egg
+        evolutionLocked = (try? c.decodeIfPresent(Bool.self, forKey: .evolutionLocked)) ?? false
     }
 }
 

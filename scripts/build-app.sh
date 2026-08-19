@@ -34,6 +34,18 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <!-- Entry point for a trade invite link (poketokenbar://trade?server=&session=). Registration
+         here is required for AppDelegate.application(_:open:) to receive the open event for this
+         scheme from macOS. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>io.github.chattymin.poketokenbar.trade</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>CFBundleURLSchemes</key>
+            <array><string>poketokenbar</string></array>
+        </dict>
+    </array>
     <!-- ATS 는 기본값이 이미 이렇지만 명시한다 — 감사자가 Info.plist 만 보고 "이 앱은 평문 HTTP 를
          쓰지 않는다"를 확인할 수 있어야 하고, 나중에 예외가 추가되면 diff 에 드러난다. -->
     <key>NSAppTransportSecurity</key>

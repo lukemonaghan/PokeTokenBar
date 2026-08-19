@@ -122,7 +122,8 @@ final class UsageEnvironmentTests: XCTestCase {
     /// 허용 목록은 "사용자가 셸에 export 해 두는 값이 아닌 것"만 담는다:
     /// - `UsageEnvironment` 자신(프로세스 환경을 읽는 유일한 정당한 위치)
     /// - `BinaryLocator`: 자식 프로세스 환경 구성과 `SHELL` — 앱이 쓰는 값이지 사용자 override 가 아니다
-    /// - `CompanionStore`: `PTB_STATE_DIR` 은 개발/QA 격리용
+    /// - `CompanionStore`/`TradeStore`: `PTB_STATE_DIR` is for dev/QA isolation (both decide their
+    ///   state file location this way — same justification, same exception)
     /// - `OAuthLimitsProvider`: 의도적으로 프로세스 환경만 본다(자동 폴링 경로에서 셸 spawn 금지 —
     ///   해당 함수 주석 참조). 값이 필요한 사용량 스캔 쪽이 이미 셸 조회를 한다.
     func testNoProviderReadsUsageLocationEnvDirectly() throws {
@@ -130,6 +131,7 @@ final class UsageEnvironmentTests: XCTestCase {
             "UsageEnvironment.swift",
             "BinaryLocator.swift",
             "CompanionStore.swift",
+            "TradeStore.swift",
             "OAuthLimitsProvider.swift",
         ]
         let sources = URL(fileURLWithPath: #filePath)

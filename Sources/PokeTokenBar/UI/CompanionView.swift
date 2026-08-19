@@ -498,7 +498,23 @@ struct CompanionHeader: View {
                     if store.hasActive {
                         // 단계 + 성격(부화 시 확정된 개체 아이덴티티)
                         let nature = store.currentNature.map { " · \($0.name(store.language))" } ?? ""
-                        Text(store.stageText + nature).font(.caption2).foregroundStyle(.secondary)
+                        HStack(spacing: 4) {
+                            Text(store.stageText + nature).font(.caption2).foregroundStyle(.secondary)
+                            Spacer(minLength: 4)
+                            // Locking a fully-evolved mon has nothing left to block, so the toggle
+                            // only shows up while there's still a next form to hold back.
+                            if !store.isFinalStage, let mon = store.trainingMon {
+                                Button {
+                                    store.setEvolutionLocked(!mon.evolutionLocked, for: mon.id)
+                                } label: {
+                                    Image(systemName: mon.evolutionLocked ? "lock.fill" : "lock.open")
+                                        .font(.system(size: 10))
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(mon.evolutionLocked ? Color.orange : Color.secondary)
+                                .help(mon.evolutionLocked ? store.l.evolutionLockedHelp : store.l.evolutionUnlockedHelp)
+                            }
+                        }
                         ProgressView(value: store.progress).controlSize(.small).tint(.orange)
                         if store.tokensToNext > 0 {
                             let amount = TokenFormatter.compact(store.tokensToNext)
@@ -839,6 +855,13 @@ private struct PartyMemberRow: View {
                         }
                         if mon.isShiny {
                             Text("✨").font(.system(size: 10)).accessibilityLabel(store.l.dexShinyLabel)
+                        }
+                        // Read-only here — toggling lives on the home screen for the training mon.
+                        // A row-level tap already means "make this the training mon"; a second,
+                        // independently-tappable control inside that same row would fight it for taps.
+                        if mon.evolutionLocked {
+                            Image(systemName: "lock.fill").font(.system(size: 9)).foregroundStyle(.orange)
+                                .accessibilityLabel(store.l.evolutionLockedBadge)
                         }
                     }
                     HStack(spacing: 6) {

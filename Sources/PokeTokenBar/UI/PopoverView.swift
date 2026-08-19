@@ -19,12 +19,14 @@ enum PopoverMetrics {
 @Observable
 final class PopoverNavigation {
     var showSettings = false
+    var showTrade = false
     var tab: PopoverTab = .home
     /// 프로바이더 탭 선택 — reset() 대상이 아님(팝오버를 다시 열어도 보던 서비스 유지).
     var providerID: String?
 
     func reset() {
         showSettings = false
+        showTrade = false
         tab = .home
     }
 }
@@ -33,6 +35,8 @@ struct PopoverView: View {
     @Environment(UsageStore.self) private var store
     @Environment(CompanionStore.self) private var companion
     @Environment(UpdateChecker.self) private var updater
+    @Environment(OnlineStore.self) private var online
+    @Environment(TradeStore.self) private var trade
     @Environment(PopoverNavigation.self) private var nav
 
     private var l: L { companion.l }
@@ -42,7 +46,12 @@ struct PopoverView: View {
         // 이후 팝오버의 모든 버튼 클릭을 차단할 수 있음 — 팝오버 내부 화면 전환으로 처리
         @Bindable var nav = nav
         Group {
-            if nav.showSettings {
+            if nav.showTrade {
+                TradeView(onClose: { nav.showTrade = false })
+                    .environment(companion)
+                    .environment(trade)
+                    .environment(online)
+            } else if nav.showSettings {
                 SettingsView(onClose: { nav.showSettings = false })
                     .environment(store)
                     .environment(companion)
@@ -587,6 +596,13 @@ struct PopoverView: View {
                 }
             }
             Spacer()
+            Button {
+                nav.showTrade = true
+            } label: {
+                Image(systemName: "arrow.left.arrow.right")
+            }
+            .buttonStyle(.borderless)
+            .help(l.tradeEntryPointHelp)
             Button {
                 nav.showSettings = true
             } label: {

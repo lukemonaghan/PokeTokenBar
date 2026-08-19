@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var companion: CompanionStore!
     private var updater: UpdateChecker!
     private var online: OnlineStore!
+    private var trade: TradeStore!
     private var floatingPet: FloatingPetController!
     private let navigation = PopoverNavigation()
 
@@ -60,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         companion = CompanionStore()
         updater = UpdateChecker()
         online = OnlineStore()
+        trade = TradeStore(companion: companion, online: online)
         store.localizationLanguage = companion.language   // 알림 현지화용 미러 시드
         store.onRefresh = { [weak self] in self?.onStoreRefreshed() }   // 한도 로드 후 companion·사탕 지급
         floatingPet = FloatingPetController(
@@ -358,7 +360,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.contentViewController = NSHostingController(
             rootView: PopoverView()
                 .environment(store).environment(companion).environment(updater)
-                .environment(online).environment(navigation))
+                .environment(online).environment(navigation).environment(trade))
+    }
+
+    /// Entry point for a trade invite link (`poketokenbar://trade?...`) — macOS calls this delegate
+    /// method for a scheme registered via `CFBundleURLTypes` (the hook that fits this app's
+    /// delegate-based structure, rather than `.onOpenURL`). LSUIElement only affects Dock/menu-bar
+    /// visibility, so it's unrelated to this hook.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let url = urls.first, let link = TradeDeepLink(url: url) else { return }
+        trade.handleIncomingLink(link)
+        openPopover()
+        navigation.showTrade = true
     }
 
     @objc private func togglePopover() {

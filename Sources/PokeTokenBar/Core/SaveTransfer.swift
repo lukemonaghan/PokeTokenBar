@@ -139,8 +139,22 @@ enum SaveTransfer {
     ///
     /// 다운스트림 산술 지점마다 막으면 새 지점이 생길 때마다 재발하므로, 값이 **들어오는 경계 한 곳**에서
     /// 정규화한다. 대상은 실제로 산술에 쓰이는 필드뿐이다 — 도감·인벤토리 항목은 잘라내지 않는다(데이터 손실).
+    private static func clampToken(_ v: Int) -> Int { min(max(0, v), maxTokenValue) }
+
+    /// Trust-boundary clamp for a single individual — shared by both the party-array sweep
+    /// (sanitized) and a mon received via trade (CompanionStore.addTradedMon). A trade payload is
+    /// just as much an outside-the-app value (the other client, the server) as a save file, so it
+    /// needs the same normalization.
+    static func sanitizedMon(_ mon: MonState) -> MonState {
+        var m = mon
+        m.usedAtStage = clampToken(m.usedAtStage)
+        // totalForms feeds `kk * (kk + 1)` (PokemonBalance.phaseThreshold) — a large value is a trap by itself.
+        m.totalForms = min(max(1, m.totalForms), 12)
+        m.stageIndex = min(max(0, m.stageIndex), max(0, m.pathIDs.count - 1))
+        return m
+    }
+
     static func sanitized(_ state: CompanionState) -> CompanionState {
-        func clampToken(_ v: Int) -> Int { min(max(0, v), maxTokenValue) }
         var s = state
         s.usedSinceInstall = clampToken(s.usedSinceInstall)
         s.spentTokens = clampToken(s.spentTokens)
@@ -168,14 +182,7 @@ enum SaveTransfer {
         if s.eggTier?.captureRateCeiling == nil { s.eggTier = nil }
         // PC 전원을 훑는다 — 예전엔 개체가 하나(active)라 한 번만 클램프하면 됐지만, 지금은 party 배열
         // 전체가 대상이다. 여기서 한 명이라도 빠뜨리면 그 개체의 다음 진화 판정이 오버플로 트랩으로 죽는다.
-        s.party = s.party.map { mon in
-            var m = mon
-            m.usedAtStage = clampToken(m.usedAtStage)
-            // totalForms 는 `kk * (kk + 1)` 형태로 쓰여(PokemonBalance.phaseThreshold) 큰 값이 그 자체로 트랩이다.
-            m.totalForms = min(max(1, m.totalForms), 12)
-            m.stageIndex = min(max(0, m.stageIndex), max(0, m.pathIDs.count - 1))
-            return m
-        }
+        s.party = s.party.map(sanitizedMon)
         // trainingSlotID 는 이제 party 를 가리키는 포인터다 — 손편집·마이그레이션 버그로 아무도 가리키지
         // 않게 되면 trainingMon 이 영영 nil 이 되어 조용히 멈춘 것처럼 보인다(진단 불가). 여기서 정리한다.
         if let tid = s.trainingSlotID, !s.party.contains(where: { $0.id == tid }) { s.trainingSlotID = nil }
