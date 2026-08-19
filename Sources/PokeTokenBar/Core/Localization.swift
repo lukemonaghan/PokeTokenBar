@@ -423,6 +423,8 @@ struct L {
     var evolutionLockedBadge: String { t("잠김", "Locked", "ロック中", "Bloqueado") }
     var pcLockEvolution: String { t("진화 잠그기", "Lock evolution", "進化をロック", "Bloquear evolución") }
     var pcUnlockEvolution: String { t("진화 잠금 해제", "Unlock evolution", "進化ロックを解除", "Desbloquear evolución") }
+    var pcSetFloating: String { t("플로팅 펫으로 추가", "Add as floating pet", "フローティングペットに追加", "Añadir como mascota flotante") }
+    var pcUnsetFloating: String { t("플로팅 펫에서 제거", "Remove floating pet", "フローティングペットから削除", "Quitar mascota flotante") }
     /// 도감 총계는 개체가 아니라 종 수 — 로그의 dexTotal("총 N마리")과 단위가 다르다.
     func dexSpeciesTotal(_ n: Int) -> String { t("\(n)종", "\(n) species", "\(n)種", "\(n) especies") }
     func dexPageLabel(_ page: Int, _ total: Int) -> String {

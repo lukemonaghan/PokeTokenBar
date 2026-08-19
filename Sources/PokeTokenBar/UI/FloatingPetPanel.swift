@@ -11,14 +11,18 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
     private let store: UsageStore
     private let companion: CompanionStore
     private let defaults: UserDefaults
-    private var panel: NSPanel?
+    /// One panel per floating mon, keyed by `MonState.id` — multiple can be up at once.
+    private var panels: [String: NSPanel] = [:]
+    private var builtAnimated: [String: Bool] = [:]
     private var hoverPanel: NSPanel?
+    /// Which pet the hover callout is currently anchored to — lets `windowDidMove` reposition it
+    /// only when the panel that actually moved is the one being hovered.
+    private weak var hoveredPanel: NSPanel?
     private var displayAwake = true
-    private var builtAnimated: Bool?
     private var powerObserver: NSObjectProtocol?
-
-    private static let originXKey = "floatingPetOriginX"
-    private static let originYKey = "floatingPetOriginY"
+    /// Edge-detects `store.floatingPetEnabled` going false→true, the only moment `sync()` seeds a
+    /// default floating mon (the training one) if nothing is explicitly flagged yet — see sync().
+    private var previousEnabled = false
 
     /// Squared movement (pt²) below which a mouse-up counts as a click, not a drag.
     static let clickThresholdSquared: CGFloat = 16  // ~4pt
@@ -46,16 +50,15 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
         var wouldTruncate: Bool
     }
 
+    /// Same for every pet — opens the same popover regardless of which one was clicked.
     private var onOpenPopover: (() -> Void)?
-    private var onHide: (() -> Void)?
 
     init(store: UsageStore, companion: CompanionStore, defaults: UserDefaults = .standard,
-         onOpenPopover: (() -> Void)? = nil, onHide: (() -> Void)? = nil) {
+         onOpenPopover: (() -> Void)? = nil) {
         self.store = store
         self.companion = companion
         self.defaults = defaults
         self.onOpenPopover = onOpenPopover
-        self.onHide = onHide
         super.init()
         observeSettings()
         observePowerState()
@@ -82,6 +85,8 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
             _ = store.highestLimitUtilization
             _ = store.limitDisplayMode   // hover 툴팁 %가 파생되는 값 — 수동 관찰 표면은 파생 원천을 직접 추적(defect-log §표시·UI)
             _ = companion.language
+            _ = companion.floatingMons   // 개별 플로팅 지정 변경(PC 상세 화면) 반영
+            _ = companion.trainingMon?.id   // 기본값 로직(sync 참고)이 훈련 대상 변경도 봐야 한다
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -172,42 +177,60 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
     }
 
     private func sync() {
-        guard store.floatingPetEnabled, displayAwake else { hide(); return }
-        show()
+        let enabled = store.floatingPetEnabled
+        defer { previousEnabled = enabled }
+        guard enabled, displayAwake else { hideAll(); return }
+        // Only at the moment the master toggle flips on, and only if nothing is explicitly flagged
+        // yet, seed the training mon as the default floating pet. After that this never re-fires —
+        // explicitly removing every floating pet must leave zero shown, not bounce back.
+        if !previousEnabled, companion.floatingMons.isEmpty, let training = companion.trainingMon {
+            companion.setFloating(true, for: training.id)
+        }
+        let targets = companion.floatingMons
+        let targetIDs = Set(targets.map(\.id))
+        for id in panels.keys where !targetIDs.contains(id) { removePanel(for: id) }
+        for (index, mon) in targets.enumerated() { show(mon: mon, index: index) }
     }
 
-    private func show() {
-        let p = panel ?? makePanel()
-        panel = p
+    private func show(mon: MonState, index: Int) {
+        let p = panels[mon.id] ?? makePanel()
+        panels[mon.id] = p
         let wantAnimated = Self.shouldAnimate(lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled)
-        if p.contentView == nil || builtAnimated != wantAnimated {
+        if p.contentView == nil || builtAnimated[mon.id] != wantAnimated {
             let hosting = PetHostingView(rootView: AnyView(
-                FloatingPetView(animated: wantAnimated).environment(store).environment(companion)))
+                FloatingPetView(monID: mon.id, animated: wantAnimated).environment(store).environment(companion)))
             hosting.onOpenPopover = onOpenPopover
-            hosting.onHide = onHide
+            hosting.onHide = { [weak self] in self?.companion.setFloating(false, for: mon.id) }
             hosting.languageProvider = { [weak self] in self?.companion.language ?? .systemDefault }
             hosting.onHoverChange = { [weak self] hovering in
-                if hovering { self?.showHoverCallout() } else { self?.hideHoverCallout() }
+                if hovering { self?.showHoverCallout(for: p) } else { self?.hideHoverCallout() }
             }
             p.contentView = hosting
-            builtAnimated = wantAnimated
+            builtAnimated[mon.id] = wantAnimated
         }
         if let hosting = p.contentView as? PetHostingView {
             hosting.toolTip = currentHoverText()
         }
         let petSize = CGFloat(store.floatingPetSize)
-        p.setFrame(targetFrame(petSize: petSize, showingBubble: store.currentBubbleAlert != nil),
-                   display: true)
+        p.setFrame(targetFrame(monID: mon.id, index: index, petSize: petSize,
+                               showingBubble: store.currentBubbleAlert != nil), display: true)
         p.orderFrontRegardless()
-        if hoverPanel?.isVisible == true { showHoverCallout() }
+        if hoveredPanel === p { showHoverCallout(for: p) }
     }
 
-    private func hide() {
+    private func hideAll() {
         hideHoverCallout()
-        guard let p = panel else { return }
+        for p in panels.values { p.orderOut(nil); p.contentView = nil }
+        panels.removeAll()
+        builtAnimated.removeAll()
+    }
+
+    private func removePanel(for monID: String) {
+        guard let p = panels.removeValue(forKey: monID) else { return }
+        if hoveredPanel === p { hideHoverCallout() }
         p.orderOut(nil)
         p.contentView = nil
-        builtAnimated = nil
+        builtAnimated.removeValue(forKey: monID)
     }
 
     private func currentHoverText() -> String {
@@ -218,8 +241,8 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
             l: L(companion.language))
     }
 
-    private func showHoverCallout() {
-        guard let pet = panel, pet.isVisible else { return }
+    private func showHoverCallout(for pet: NSPanel) {
+        guard pet.isVisible else { return }
         // Don't cover an active limit bubble — the speech bubble is the priority surface.
         if store.currentBubbleAlert != nil { hideHoverCallout(); return }
         let text = currentHoverText()
@@ -249,11 +272,13 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
         let petFrame = pet.frame
         hp.setFrameOrigin(NSPoint(x: petFrame.midX - size.width / 2, y: petFrame.maxY + 6))
         hp.orderFrontRegardless()
+        hoveredPanel = pet
     }
 
     private func hideHoverCallout() {
         hoverPanel?.orderOut(nil)
         hoverPanel?.contentView = nil
+        hoveredPanel = nil
     }
 
     private func makeHoverPanel() -> NSPanel {
@@ -272,27 +297,35 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
         return p
     }
 
-    private func targetFrame(petSize: CGFloat, showingBubble: Bool) -> NSRect {
+    private static func originKey(_ monID: String, _ axis: String) -> String {
+        "floatingPetOrigin\(axis)_\(monID)"
+    }
+
+    private func targetFrame(monID: String, index: Int, petSize: CGFloat, showingBubble: Bool) -> NSRect {
         let size = Self.panelSize(petSize: petSize, showingBubble: showingBubble)
         let petOrigin: NSPoint
-        if let x = defaults.object(forKey: Self.originXKey) as? Double,
-           let y = defaults.object(forKey: Self.originYKey) as? Double {
+        if let x = defaults.object(forKey: Self.originKey(monID, "X")) as? Double,
+           let y = defaults.object(forKey: Self.originKey(monID, "Y")) as? Double {
             petOrigin = NSPoint(x: x, y: y)
         } else {
-            petOrigin = Self.defaultPetOrigin(petSize: petSize)
+            petOrigin = Self.defaultPetOrigin(petSize: petSize, index: index)
         }
         var frame = NSRect(origin: Self.panelOrigin(petOrigin: petOrigin, petSize: petSize, panelSize: size),
                            size: size)
         if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) {
-            let fallbackPet = Self.defaultPetOrigin(petSize: petSize)
+            let fallbackPet = Self.defaultPetOrigin(petSize: petSize, index: index)
             frame.origin = Self.panelOrigin(petOrigin: fallbackPet, petSize: petSize, panelSize: size)
         }
         return frame
     }
 
-    private static func defaultPetOrigin(petSize: CGFloat) -> NSPoint {
+    /// First-time (no saved drag position yet) placement — lines pets up along the bottom-right so
+    /// several at once don't stack on top of each other. Each one keeps its own dragged position
+    /// afterward regardless of how `index` shifts as others are added/removed.
+    private static func defaultPetOrigin(petSize: CGFloat, index: Int) -> NSPoint {
         guard let visible = NSScreen.main?.visibleFrame else { return NSPoint(x: 120, y: 120) }
-        return NSPoint(x: visible.maxX - petSize - 24, y: visible.minY + 24)
+        let stride = petSize + 16
+        return NSPoint(x: visible.maxX - petSize - 24 - CGFloat(index) * stride, y: visible.minY + 24)
     }
 
     private func makePanel() -> NSPanel {
@@ -315,13 +348,14 @@ final class FloatingPetController: NSObject, NSWindowDelegate {
     }
 
     func windowDidMove(_ notification: Notification) {
-        guard let p = panel, p.isVisible else { return }
+        guard let window = notification.object as? NSPanel, window.isVisible,
+              let monID = panels.first(where: { $0.value === window })?.key else { return }
         let petSize = CGFloat(store.floatingPetSize)
         let size = Self.panelSize(petSize: petSize, showingBubble: store.currentBubbleAlert != nil)
-        let pet = Self.petOrigin(panelOrigin: p.frame.origin, petSize: petSize, panelSize: size)
-        defaults.set(Double(pet.x), forKey: Self.originXKey)
-        defaults.set(Double(pet.y), forKey: Self.originYKey)
-        if hoverPanel?.isVisible == true { showHoverCallout() }
+        let pet = Self.petOrigin(panelOrigin: window.frame.origin, petSize: petSize, panelSize: size)
+        defaults.set(Double(pet.x), forKey: Self.originKey(monID, "X"))
+        defaults.set(Double(pet.y), forKey: Self.originKey(monID, "Y"))
+        if hoveredPanel === window { showHoverCallout(for: window) }
     }
 }
 
@@ -412,9 +446,14 @@ final class PetHostingView: NSHostingView<AnyView> {
 
 struct FloatingPetView: View {
     static let frameFloor: TimeInterval = 0.4
+    /// Which party member this window shows — looked up live from `companion` each render (via
+    /// environment, like the rest of this file) so it stays current if that mon evolves.
+    let monID: MonState.ID
     var animated: Bool = true
     @Environment(UsageStore.self) private var store
     @Environment(CompanionStore.self) private var companion
+
+    private var mon: MonState? { companion.party.first { $0.id == monID } }
 
     var body: some View {
         let size = CGFloat(store.floatingPetSize)
@@ -425,8 +464,8 @@ struct FloatingPetView: View {
                     .zIndex(1)
             }
 
-            SpriteView(speciesID: companion.currentSpeciesID, size: size, animated: animated,
-                       shiny: companion.currentIsShiny, minFrameDelay: Self.frameFloor)
+            SpriteView(speciesID: mon?.currentID, size: size, animated: animated,
+                       shiny: mon?.isShiny ?? false, minFrameDelay: Self.frameFloor)
                 .frame(width: size, height: size)
                 .zIndex(0)
         }

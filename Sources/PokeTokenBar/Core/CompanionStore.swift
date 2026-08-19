@@ -755,6 +755,21 @@ final class CompanionStore {
         return true
     }
 
+    // MARK: PC — Floating pet
+
+    /// Party members with their own floating desktop pet window — any subset, independent of who's
+    /// training. FloatingPetController defaults this to the training mon the first time the feature
+    /// is turned on (see its sync()); after that it's purely user-chosen via the PC detail screen.
+    var floatingMons: [MonState] { state.party.filter(\.isFloating) }
+
+    @discardableResult
+    func setFloating(_ floating: Bool, for monID: MonState.ID) -> Bool {
+        guard let idx = state.party.firstIndex(where: { $0.id == monID }) else { return false }
+        state.party[idx].isFloating = floating
+        save()
+        return true
+    }
+
     // MARK: PC — 훈련 대상 전환
 
     /// 훈련 슬롯을 PC 안의 다른 개체로 전환 — 무료, 알과 무관(이미 소유한 개체 사이의 전환일 뿐).

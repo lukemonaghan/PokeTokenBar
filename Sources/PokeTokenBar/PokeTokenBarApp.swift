@@ -66,9 +66,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         store.onRefresh = { [weak self] in self?.onStoreRefreshed() }   // 한도 로드 후 companion·사탕 지급
         floatingPet = FloatingPetController(
             store: store, companion: companion,
-            onOpenPopover: { [weak self] in self?.openPopover() },
-            onHide: { [weak self] in self?.store.floatingPetEnabled = false }
-        )   // 데스크톱 플로팅 펫(옵트인)
+            onOpenPopover: { [weak self] in self?.openPopover() }
+        )   // 데스크톱 플로팅 펫(옵트인) — 개별 펫 끄기는 컨트롤러가 그 개체의 isFloating 만 내린다
         Task { await updater.check() }                    // 기동 시 1회 업데이트 확인
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)

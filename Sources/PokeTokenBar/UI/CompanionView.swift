@@ -1060,12 +1060,27 @@ private struct MonDetailView: View {
                 }
                 .buttonStyle(.bordered)
             }
-            if !isTraining {
+            // Final stage + nothing left to next threshold = nothing left to train toward — offering
+            // "make this your training focus" here is just noise (user report: confusing on a maxed mon).
+            if !isTraining, !(isFinalStage == true && tokensToNext == 0) {
                 Button(store.l.pcSetTraining) {
                     store.setTrainingSlot(to: mon.id)
                 }
                 .buttonStyle(.borderedProminent)
             }
+            Spacer(minLength: 0)
+            // Icon-only (vs. the labeled buttons above) — this one applies to every mon regardless of
+            // training/evolution state, so it needs to stay compact even when both other buttons show.
+            Button {
+                store.setFloating(!mon.isFloating, for: mon.id)
+            } label: {
+                Label(mon.isFloating ? store.l.pcUnsetFloating : store.l.pcSetFloating,
+                      systemImage: mon.isFloating ? "pin.slash" : "pin")
+            }
+            .buttonStyle(.bordered)
+            .labelStyle(.iconOnly)
+            .foregroundStyle(mon.isFloating ? Color.accentColor : Color.primary)
+            .help(mon.isFloating ? store.l.pcUnsetFloating : store.l.pcSetFloating)
         }
     }
 }

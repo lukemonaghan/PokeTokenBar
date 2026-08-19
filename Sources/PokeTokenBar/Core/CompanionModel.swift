@@ -413,6 +413,9 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     /// never acts on crossing a threshold (no evolve, no graduate). Lets someone keep a form they
     /// like without losing progress toward it.
     var evolutionLocked = false
+    /// User-set — this individual gets its own floating desktop pet window (PC detail screen).
+    /// Multiple party members can be floating at once, independent of who's training.
+    var isFloating = false
     // pathIDs 가 비면(손상된 상태 파일) baseID 로 폴백 — 렌더마다 읽히므로 out-of-bounds 크래시 방지.
     var currentID: Int { pathIDs.isEmpty ? baseID : pathIDs[min(stageIndex, pathIDs.count - 1)] }
     /// 표시 전용 레벨(Lv.1~100) — PokemonBalance.level 참고.
@@ -421,7 +424,8 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
     init(id: String = UUID().uuidString, baseID: Int, pathIDs: [Int], plannedPathIDs: [Int]? = nil,
          stageIndex: Int, usedAtStage: Int, rarity: Rarity, totalForms: Int, isShiny: Bool = false,
          nature: PokemonNature? = nil, dittoDisguise: Int? = nil, dittoRevealed: Bool = false,
-         acquiredAt: Date = Date(), acquiredVia: AcquisitionSource = .egg, evolutionLocked: Bool = false) {
+         acquiredAt: Date = Date(), acquiredVia: AcquisitionSource = .egg, evolutionLocked: Bool = false,
+         isFloating: Bool = false) {
         self.id = id
         self.baseID = baseID
         self.pathIDs = pathIDs
@@ -441,6 +445,7 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         self.acquiredAt = acquiredAt
         self.acquiredVia = acquiredVia
         self.evolutionLocked = evolutionLocked
+        self.isFloating = isFloating
     }
 
     // 하위호환 디코딩: shiny/nature/id/acquiredAt/acquiredVia 는 구버전 저장에 없음 → 기본값.
@@ -470,6 +475,7 @@ struct MonState: Codable, Sendable, Identifiable, Equatable {
         acquiredAt = (try? c.decodeIfPresent(Date.self, forKey: .acquiredAt)) ?? Date()
         acquiredVia = (try? c.decodeIfPresent(AcquisitionSource.self, forKey: .acquiredVia)) ?? .egg
         evolutionLocked = (try? c.decodeIfPresent(Bool.self, forKey: .evolutionLocked)) ?? false
+        isFloating = (try? c.decodeIfPresent(Bool.self, forKey: .isFloating)) ?? false
     }
 }
 
