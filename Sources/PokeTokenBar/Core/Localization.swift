@@ -376,7 +376,7 @@ struct L {
     /// PC = 소유한 모든 포켓몬(파티). 실제 게임의 PC 박스에서 따온 이름.
     var pcTitle: String { t("PC", "PC", "PC", "PC") }
     func pcLevel(_ n: Int) -> String { t("Lv.\(n)", "Lv.\(n)", "Lv.\(n)", "Nv.\(n)") }
-    var pcTapToTrain: String { t("탭하면 훈련 대상으로 전환", "Tap to make this your training Pokémon", "タップで育成対象に切り替え", "Toca para hacerlo tu Pokémon en entrenamiento") }
+    var pcSetTraining: String { t("훈련 대상으로 설정", "Set as training", "育成対象に設定", "Poner en entrenamiento") }
 
     // MARK: 거래
     var tradeTitle: String { t("거래", "Trade", "交換", "Intercambio") }
@@ -421,6 +421,8 @@ struct L {
     var evolutionLockedHelp: String { t("진화 잠김 — 탭하면 해제(경험치는 계속 쌓여요)", "Evolution locked — tap to unlock (still earns XP)", "進化ロック中 — タップで解除（経験値は引き続き貯まります）", "Evolución bloqueada — toca para desbloquear (sigue ganando XP)") }
     var evolutionUnlockedHelp: String { t("탭하면 이 포켓몬의 진화를 막아요", "Tap to lock this Pokémon's evolution", "タップでこのポケモンの進化をロックします", "Toca para bloquear la evolución de este Pokémon") }
     var evolutionLockedBadge: String { t("잠김", "Locked", "ロック中", "Bloqueado") }
+    var pcLockEvolution: String { t("진화 잠그기", "Lock evolution", "進化をロック", "Bloquear evolución") }
+    var pcUnlockEvolution: String { t("진화 잠금 해제", "Unlock evolution", "進化ロックを解除", "Desbloquear evolución") }
     /// 도감 총계는 개체가 아니라 종 수 — 로그의 dexTotal("총 N마리")과 단위가 다르다.
     func dexSpeciesTotal(_ n: Int) -> String { t("\(n)종", "\(n) species", "\(n)種", "\(n) especies") }
     func dexPageLabel(_ page: Int, _ total: Int) -> String {

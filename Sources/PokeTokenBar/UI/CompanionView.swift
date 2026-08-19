@@ -546,7 +546,7 @@ struct CompanionHeader: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    Text(statusLine).font(.caption2).foregroundStyle(.secondary)
+                    Text(store.statusLine).font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
             }
@@ -635,18 +635,6 @@ struct CompanionHeader: View {
         }
     }
 
-    private var statusLine: String {
-        let l = store.l
-        switch store.displayState {
-        case .egg:     return l.statusEgg
-        case .idle:    return l.statusIdle
-        case .working: return l.statusWorking
-        case .focus:   return l.statusFocus
-        case .tired:   return l.statusTired
-        case .sleep:   return l.statusSleep
-        case .levelUp: return store.justEvolvedTo.map { l.statusEvolved($0) } ?? l.statusGrew
-        }
-    }
 }
 
 /// 희귀도 1종 캡슐 — 색 점 + 라벨 + 개수. 선택 시 원색 링 + 체크마크로 강조.
@@ -716,7 +704,8 @@ private enum CollectionSegment: Hashable { case dex, pc, log }
 /// 세 화면은 같은 데이터를 다른 축으로 본다:
 ///  - **도감**: 종 1개 = 1칸, 영구 언락(개체를 나중에 잃어도 안 지워진다). 같은 라인을 여러 번
 ///    키워도 한 칸으로 접힌다(종 정보만).
-///  - **PC**: 지금 소유한 개체 1마리 = 1칸. 훈련 중이 아닌 칸을 탭하면 그 개체로 훈련 대상을 바꾼다.
+///  - **PC**: 지금 소유한 개체 1마리 = 1칸(도감과 같은 4×6 격자). 칸을 탭하면 개체 상세 화면이
+///    열리고, 거기서 진화 잠금·훈련 전환을 한다.
 ///  - **로그**: 파티에 합류한 개체 1마리 = 1행(합류 시각순, 알/거래 표시). 같은 라인이 여러 행으로
 ///    나오는 게 정상 — 성격·합류 시각처럼 개체에 딸린 정보는 여기에만 있다.
 /// 상위 탭(PopoverTab)은 그대로 4개 — 세그먼트 폭(332/3)이 넉넉해 탭바를 늘릴 필요가 없다.
@@ -804,82 +793,280 @@ struct CollectionView: View {
     }
 }
 
-/// PC — 소유한 모든 개체. 훈련 중이 아닌 카드를 탭하면 그 개체로 훈련 대상을 전환한다(무료, 알과 무관).
-/// 종 단위 도감·시각순 로그와 달리 개체 목록이라 페이지 격자 대신 스크롤 목록으로 둔다 — 우측 예시처럼
-/// 파티 규모에 상한이 없다(PLAN 의 "PC 는 무제한" 결정).
+/// PC — 소유한 모든 개체. 도감과 같은 4×6 페이지 격자(칸 크기 통일). 칸을 탭하면 개체 상세 화면
+/// (MonDetailView)을 연다 — 예전엔 탭이 곧 훈련 전환이었지만, 그 동작은 상세 화면의 버튼으로 옮겨졌다
+/// (잠금 토글도 같은 화면에 있어야 하므로 자연스러운 위치).
 private struct PartyGridView: View {
     let store: CompanionStore
+    @State private var page = 0
+    @State private var selectedMonID: MonState.ID?
+
+    private static let columns = 4
+    private static let rows = 6
+    private static let pageSize = columns * rows
+    private static let spacing: CGFloat = 4
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text(store.l.pcTitle).font(.callout.weight(.semibold))
-                Text(store.l.dexTotal(store.party.count)).font(.caption2).foregroundStyle(.secondary)
+        if let id = selectedMonID, let mon = store.party.first(where: { $0.id == id }) {
+            MonDetailView(store: store, mon: mon) { selectedMonID = nil }
+        } else {
+            let party = store.party
+            let pageCount = max(1, (party.count + Self.pageSize - 1) / Self.pageSize)
+            let current = min(page, pageCount - 1)
+            let slice = Array(party.dropFirst(current * Self.pageSize).prefix(Self.pageSize))
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text(store.l.pcTitle).font(.callout.weight(.semibold))
+                    Text(store.l.dexTotal(party.count)).font(.caption2).foregroundStyle(.secondary)
+                }
+                grid(slice)
+                footer(current: current, pageCount: pageCount)
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(store.party) { mon in
-                        PartyMemberRow(store: store, mon: mon, isTraining: mon.id == store.trainingMon?.id)
+        }
+    }
+
+    /// 도감 격자와 같은 고정 4×6 — 빈 칸은 투명(테두리 없이 정렬만 유지).
+    private func grid(_ slice: [MonState]) -> some View {
+        VStack(spacing: Self.spacing) {
+            ForEach(0..<Self.rows, id: \.self) { row in
+                HStack(spacing: Self.spacing) {
+                    ForEach(0..<Self.columns, id: \.self) { col in
+                        let i = row * Self.columns + col
+                        if i < slice.count {
+                            let mon = slice[i]
+                            PartyMemberCell(store: store, mon: mon, isTraining: mon.id == store.trainingMon?.id) {
+                                selectedMonID = mon.id
+                            }
+                            .frame(maxWidth: .infinity)
+                        } else {
+                            Color.clear.frame(maxWidth: .infinity)
+                        }
                     }
                 }
+                .frame(maxHeight: .infinity)
             }
-            .frame(maxHeight: .infinity)
         }
+        .frame(maxHeight: .infinity)
+    }
+
+    private func footer(current: Int, pageCount: Int) -> some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 4)
+            if pageCount > 1 {
+                Button { page = max(0, current - 1) } label: { Image(systemName: "chevron.left") }
+                    .buttonStyle(.plain).disabled(current == 0)
+                    .accessibilityLabel(store.l.dexPagePrev)
+                Text("\(current + 1) / \(pageCount)")
+                    .font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(store.l.dexPageLabel(current + 1, pageCount))
+                Button { page = min(pageCount - 1, current + 1) } label: { Image(systemName: "chevron.right") }
+                    .buttonStyle(.plain).disabled(current == pageCount - 1)
+                    .accessibilityLabel(store.l.dexPageNext)
+            }
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .frame(height: 18)
     }
 }
 
-/// PC 한 행 — 종 스프라이트 + 레벨/단계 + 성격/이로치. 훈련 중인 개체는 뱃지만 붙고 탭이 비활성화된다
-/// (이미 그 개체이므로 전환할 곳이 없다).
-private struct PartyMemberRow: View {
+/// PC 격자 한 칸 — DexSpeciesCell 과 같은 크기/구조. 이름 대신 레벨(동기 값, 종 이름과 달리 조회가
+/// 필요 없다)을 보여준다. 훈련 중인 개체는 accent 링으로 표시(Dex 칸의 선택 링과 같은 시각 언어).
+private struct PartyMemberCell: View {
     let store: CompanionStore
     let mon: MonState
     let isTraining: Bool
+    let onTap: () -> Void
+
+    private static let thumb: CGFloat = 44
 
     var body: some View {
-        Button {
-            store.setTrainingSlot(to: mon.id)
-        } label: {
-            HStack(spacing: 10) {
-                SpriteView(speciesID: mon.currentID, size: 44, shiny: mon.isShiny)
-                    .frame(width: 44, height: 44)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(store.l.pcLevel(mon.level)).font(.system(size: 11, weight: .bold))
-                        if isTraining {
-                            Text(store.l.dexRaising.uppercased())
-                                .font(.system(size: 8, weight: .bold))
-                                .padding(.horizontal, 5).padding(.vertical, 1)
-                                .background(Color.accentColor.opacity(0.14))
-                                .foregroundStyle(Color.accentColor)
-                                .clipShape(Capsule())
-                        }
-                        if mon.isShiny {
-                            Text("✨").font(.system(size: 10)).accessibilityLabel(store.l.dexShinyLabel)
-                        }
-                        // Read-only here — toggling lives on the home screen for the training mon.
-                        // A row-level tap already means "make this the training mon"; a second,
-                        // independently-tappable control inside that same row would fight it for taps.
-                        if mon.evolutionLocked {
-                            Image(systemName: "lock.fill").font(.system(size: 9)).foregroundStyle(.orange)
-                                .accessibilityLabel(store.l.evolutionLockedBadge)
-                        }
-                    }
-                    HStack(spacing: 6) {
-                        Text(store.l.rarityLabel(mon.rarity)).font(.system(size: 9)).foregroundStyle(.secondary)
-                        if let nature = mon.nature {
-                            Text(nature.name(store.language)).font(.system(size: 9)).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                Spacer()
+        Button(action: onTap) {
+            VStack(spacing: 1) {
+                SpriteView(speciesID: mon.currentID, size: Self.thumb, shiny: mon.isShiny)
+                    .frame(width: Self.thumb, height: Self.thumb)
+                Text(store.l.pcLevel(mon.level))
+                    .font(.system(size: 9))
+                    .lineLimit(1).minimumScaleFactor(0.8)
             }
-            .padding(8)
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .topLeading) {
+                if mon.evolutionLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.orange)
+                        .padding(2)
+                        .background(.regularMaterial, in: Circle())
+                        .accessibilityLabel(store.l.evolutionLockedBadge)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if mon.isShiny {
+                    Text("✨")
+                        .font(.system(size: 8))
+                        .padding(.horizontal, 2)
+                        .background(.regularMaterial, in: Capsule())
+                        .accessibilityLabel(store.l.dexShinyLabel)
+                }
+            }
+            .padding(3)
             .background(Color.secondary.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                if isTraining {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.accentColor, lineWidth: 1.5)
+                }
+            }
         }
         .buttonStyle(.plain)
-        .disabled(isTraining)
-        .help(isTraining ? "" : store.l.pcTapToTrain)
+        .help(tooltip)
+        .accessibilityLabel(tooltip)
+    }
+
+    private var tooltip: String {
+        var parts = [store.l.pcLevel(mon.level), store.l.rarityLabel(mon.rarity)]
+        if mon.isShiny { parts.append(store.l.dexShinyLabel) }
+        if isTraining { parts.append(store.l.dexRaising) }
+        if mon.evolutionLocked { parts.append(store.l.evolutionLockedBadge) }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// PC 개체 상세 — 이름/레벨/희귀도/성격 + 진화 경로 + 잠금 토글 + 훈련 전환. 통계는 이번 범위 밖
+/// (사용자: "나중에 스탯을 추가할 것" — 보여줄 데이터가 없는 지금은 빈 섹션을 만들지 않는다).
+///
+/// `line` 은 훈련 중이 아닌 개체여도 조회한다(store.line(baseID:) — currentLine 과 분리돼 훈련 대상을
+/// 안 건드린다). 로드 전엔 실현된 경로만(realizedLineItems), isFinalStage 는 오판을 피하려 nil(=버튼 숨김).
+private struct MonDetailView: View {
+    let store: CompanionStore
+    let mon: MonState
+    var onClose: () -> Void
+
+    @State private var line: EvoLine?
+
+    private var isTraining: Bool { mon.id == store.trainingMon?.id }
+
+    /// CompanionView.swift 의 store.isFinalStage 와 동일한 판정(임의 개체용). 라인 미로딩이면 nil.
+    private var isFinalStage: Bool? {
+        guard let line else { return nil }
+        return line.tree.node(withID: mon.currentID)?.children.isEmpty ?? true
+    }
+
+    private var lineNodes: [EvoLineItem] {
+        if let line {
+            return CompanionStore.lineItems(pathIDs: mon.pathIDs, stageIndex: mon.stageIndex,
+                                            currentID: mon.currentID, line: line)
+        }
+        return CompanionStore.realizedLineItems(pathIDs: mon.pathIDs, stageIndex: mon.stageIndex)
+    }
+
+    private var displayName: String {
+        guard let line else { return "#\(mon.currentID)" }
+        return line.localizedName(mon.currentID, store.language)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header
+            hero
+            EvoLineView(nodes: lineNodes, mysteryLabel: store.l.unknownNextEvolution,
+                        shiny: mon.isShiny, maxWidth: PopoverMetrics.contentWidth)
+            actions
+            Spacer(minLength: 0)
+        }
+        .task(id: mon.baseID) { line = await store.line(baseID: mon.baseID) }
+    }
+
+    private var header: some View {
+        HStack {
+            Button(action: onClose) { Image(systemName: "chevron.left") }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(store.l.back)
+            Text(store.l.pcTitle).font(.callout.weight(.semibold))
+            Spacer()
+        }
+    }
+
+    /// 홈 화면(CompanionHeader)과 같은 계산 — threshold/progress/tokensToNext 는 개체 자체 필드
+    /// (rarity/totalForms/stageIndex/usedAtStage)만으로 정해지므로 훈련 중이 아니어도 그대로 쓴다.
+    private var threshold: Int {
+        PokemonBalance.phaseThreshold(rarity: mon.rarity, totalForms: mon.totalForms, stageIndex: mon.stageIndex)
+    }
+    private var progress: Double {
+        guard threshold > 0 else { return 0 }
+        return min(1, max(0, Double(mon.usedAtStage) / Double(threshold)))
+    }
+    private var tokensToNext: Int { max(0, threshold - mon.usedAtStage) }
+
+    /// isFinalStage 미확정(라인 로딩 중)일 땐 "최종 진화체"라고 성급히 단정하지 않는다 — 단계 숫자로 표기.
+    private var stageText: String {
+        guard isFinalStage == true else { return store.l.stage(mon.stageIndex + 1, mon.totalForms) }
+        return store.l.finalForm
+    }
+
+    private var hero: some View {
+        HStack(alignment: .center, spacing: 12) {
+            SpriteView(speciesID: mon.currentID, size: 64, animated: true, shiny: mon.isShiny)
+                .frame(width: 64, height: 64)
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(displayName).font(.callout.weight(.semibold))
+                    Text(store.l.pcLevel(mon.level)).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                    if mon.isShiny { Text("✨").font(.system(size: 11)) }
+                    Text(store.l.rarityLabel(mon.rarity).uppercased()).font(.system(size: 8, weight: .bold))
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(rarityColor(mon.rarity)).foregroundStyle(.white)
+                        .clipShape(Capsule())
+                    if isTraining {
+                        Text(store.l.dexRaising.uppercased())
+                            .font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.accentColor.opacity(0.14))
+                            .foregroundStyle(Color.accentColor)
+                            .clipShape(Capsule())
+                    }
+                }
+                // 홈 화면과 같은 구성: 단계·성격 → 진행바 → 다음까지 남은 토큰 → (훈련 중이면) 상태 문구.
+                let nature = mon.nature.map { " · \($0.name(store.language))" } ?? ""
+                Text(stageText + nature).font(.caption2).foregroundStyle(.secondary)
+                ProgressView(value: progress).controlSize(.small).tint(.orange)
+                if let isFinalStage, tokensToNext > 0 {
+                    let amount = TokenFormatter.compact(tokensToNext)
+                    Text(isFinalStage ? store.l.toGraduation(amount) : store.l.toNextEvolution(amount))
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+                if isTraining {
+                    Text(store.statusLine).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+    }
+
+    /// 최종 진화체엔 잠글 게 없고(isFinalStage), 이미 훈련 중인 개체엔 전환할 곳이 없다(isTraining)
+    /// — 둘 다 해당하면(예: 다 큰 훈련 중인 개체) 버튼을 아예 안 그린다. 홈 화면도 그 경우 버튼이 없다.
+    @ViewBuilder
+    private var actions: some View {
+        HStack(spacing: 8) {
+            if isFinalStage == false {
+                Button {
+                    store.setEvolutionLocked(!mon.evolutionLocked, for: mon.id)
+                } label: {
+                    Label(mon.evolutionLocked ? store.l.pcUnlockEvolution : store.l.pcLockEvolution,
+                          systemImage: mon.evolutionLocked ? "lock.open" : "lock.fill")
+                }
+                .buttonStyle(.bordered)
+            }
+            if !isTraining {
+                Button(store.l.pcSetTraining) {
+                    store.setTrainingSlot(to: mon.id)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
     }
 }
 

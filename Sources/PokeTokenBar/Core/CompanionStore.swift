@@ -139,6 +139,19 @@ final class CompanionStore {
     }
     var tokensToNext: Int { guard let a = trainingMon else { return 0 }; return max(0, threshold - a.usedAtStage) }
 
+    /// 홈 화면 상태 한 줄 — PC 상세 화면(훈련 중인 개체를 볼 때)도 같은 문구를 쓴다.
+    var statusLine: String {
+        switch displayState {
+        case .egg:     return l.statusEgg
+        case .idle:    return l.statusIdle
+        case .working: return l.statusWorking
+        case .focus:   return l.statusFocus
+        case .tired:   return l.statusTired
+        case .sleep:   return l.statusSleep
+        case .levelUp: return justEvolvedTo.map { l.statusEvolved($0) } ?? l.statusGrew
+        }
+    }
+
     /// 진화 라인 표시용: 실현된 경로 + 다음 단계 미리보기.
     /// 유일하게 이어지는 단계 뒤에 분기가 있으면, 그 확정 접두어와 하나의 미지 항목을 함께 보여 준다.
     /// 분기 후보는 부화 시 계획됐더라도 실제 진화 전까지 하나의 미지 항목으로 숨긴다.

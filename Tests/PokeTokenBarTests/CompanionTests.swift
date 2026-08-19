@@ -850,6 +850,25 @@ final class CompanionStoreTests: XCTestCase {
         XCTAssertEqual(s.trainingMon?.id, trainingID, "unlocking a benched mon must not touch the training slot")
     }
 
+    /// PC 상세 화면이 벤치 개체의 라인을 조회해도(store.line(baseID:)) 훈련 중인 개체의 currentLine/
+    /// 훈련 슬롯은 그대로여야 한다 — line(baseID:) 을 loadCurrentLine() 과 분리해 둔 이유 그 자체.
+    func testLineBaseIDDoesNotMutateTrainingLineOrSlot() async {
+        let s = store(linear3)
+        await s.hatch(baseID: 1)
+        let trainingID = s.trainingMon!.id
+        let trainingBaseIDBefore = s.currentLine?.baseID
+
+        let benched = MonState(baseID: 20, pathIDs: [20], stageIndex: 0, usedAtStage: 0,
+                                rarity: .common, totalForms: 1)
+        XCTAssertTrue(s.addTradedMon(benched, from: "Friend"))
+
+        let fetched = await s.line(baseID: 20)
+
+        XCTAssertNotNil(fetched, "line(baseID:) should resolve without touching the training slot")
+        XCTAssertEqual(s.trainingMon?.id, trainingID)
+        XCTAssertEqual(s.currentLine?.baseID, trainingBaseIDBefore)
+    }
+
     func testNoEvolutionGraduatesAtSingleThreshold() async {
         let s = store(noEvo)
         await s.hatch(baseID: 20)
@@ -875,6 +894,18 @@ final class CompanionStoreTests: XCTestCase {
             EvoLineItem(.species(1), .current),
             EvoLineItem(.species(2), .done),
         ])
+    }
+
+    /// PC 상세 화면(MonDetailView)이 쓰는 경로 — lineNodes 는 항상 훈련 대상 기준이라 이 정적
+    /// 함수를 임의 개체(훈련 중이 아닌)에 직접 쓰는 경로를 exercise 하지 못한다. 분기 라인에서
+    /// 훈련 대상용 lineNodes 와 같은 mystery-suffix 규칙이 나오는지 직접 확인.
+    func testLineItemsForArbitraryMonMatchesLineNodesMysteryShape() {
+        XCTAssertEqual(
+            CompanionStore.lineItems(pathIDs: [265], stageIndex: 0, currentID: 265, line: wurmpleLine),
+            [
+                EvoLineItem(.species(265), .current),
+                EvoLineItem(.mystery, .future),
+            ])
     }
 
     func testRepairedPlanAppendsFallbackRouteToCurrentPath() {
